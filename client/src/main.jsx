@@ -29,13 +29,18 @@ import "@fontsource/dm-sans/700.css";
 import "@fontsource/manrope/700.css";
 import "@fontsource/manrope/800.css";
 import "./style.css";
-const socket = io();
+const apiOrigin = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+const socket = io(apiOrigin || undefined);
 async function api(path, method = "GET", body) {
-  const res = await fetch(`/api${path}`, {
+  const res = await fetch(`${apiOrigin}/api${path}`, {
     method,
     headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
   });
+  if (!res.headers.get("content-type")?.includes("application/json"))
+    throw new Error(
+      "The backend is not responding. Check its deployment URL and try again.",
+    );
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "Request failed");
   return data;
@@ -159,6 +164,19 @@ function App() {
         <Droplet size={42} />
         <h1>LifeLink</h1>
         <p>{error || "Connecting to your community..."}</p>
+        {error && (
+          <button
+            className="primary"
+            onClick={() => {
+              setError("");
+              api("/state")
+                .then(setData)
+                .catch((e) => setError(e.message));
+            }}
+          >
+            Try again
+          </button>
+        )}
       </div>
     );
   const available = data.donors.filter((d) => d.available),
