@@ -101,3 +101,7 @@ package.json
 The app deliberately uses demo identity switching instead of authentication. A local visitor can act as a hospital coordinator or choose any seeded donor. Do not expose this service publicly or put real health or location data into it. It binds to loopback by default.
 
 Before a real deployment, add authenticated accounts, role-based authorization, verified hospitals and donors, privacy/consent controls, audit trails, transport security, backups and a reviewed medical workflow. Socket.IO alerts only reach connected browser sessions. Offline users see eligible open requests when they reconnect, but there are no background push notifications or delivery guarantees. The location plot is illustrative, not a navigable map.
+
+## Deployment preparation
+
+See [deployment/README.md](deployment/README.md) for a Render static frontend + free Node web service + persistent MongoDB setup. The frontend points to a live backend; it does not try to run Node.js inside static hosting.
