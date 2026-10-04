@@ -757,6 +757,201 @@ function App() {
               {RequestsTable({ all: true })}
             </section>
           )}
+          {page === "Donor portal" && (
+            <>
+              <div className="donor-profile panel">
+                <div className="avatar large">
+                  {donor.name
+                    .split(" ")
+                    .map((s) => s[0])
+                    .join("")}
+                </div>
+                <div>
+                  <span className="eyebrow">DEMO DONOR</span>
+                  <h2>
+                    {donor.name}{" "}
+                    <span className="blood-tag">{donor.bloodGroup}</span>
+                  </h2>
+                  <p>
+                    <MapPin size={14} />
+                    {donor.area}, Chennai
+                  </p>
+                </div>
+                <div className="donor-controls">
+                  <label>
+                    Preview as donor
+                    <select
+                      aria-label="Preview as donor"
+                      value={donorId}
+                      onChange={(e) => setDonorId(e.target.value)}
+                    >
+                      {data.donors.map((d) => (
+                        <option value={d.id} key={d.id}>
+                          {d.name} ({d.bloodGroup})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    className={`availability ${donor.available ? "is-available" : ""}`}
+                    disabled={busy}
+                    onClick={() =>
+                      action(`/donors/${donorId}`, "PATCH", {
+                        available: !donor.available,
+                      })
+                    }
+                  >
+                    <i />
+                    {donor.available ? "Available to donate" : "Not available"}
+                  </button>
+                </div>
+              </div>
+              <div className="portal-intro">
+                <div>
+                  <h2>Nearby requests for you</h2>
+                  <p>
+                    Exact blood group · within the hospital's search radius ·
+                    nearest donors notified first
+                  </p>
+                </div>
+                <span className="live">
+                  <Radio size={15} />
+                  Socket.IO alerts
+                </span>
+              </div>
+              {alerts
+                .filter((a) =>
+                  data.requests.some(
+                    (r) =>
+                      r.id === a.request.id &&
+                      ["Open", "Scheduled"].includes(r.status),
+                  ),
+                )
+                .map((a) => (
+                  <div
+                    key={a.request.id}
+                    className="alert-banner"
+                    role="status"
+                  >
+                    <Bell size={21} />
+                    <div>
+                      <b>New donor connection</b>
+                      <p>
+                        {a.request.bloodGroup} needed at {a.hospital.name} ·{" "}
+                        {a.distanceKm.toFixed(2)} km away · proximity rank #
+                        {a.rank}
+                      </p>
+                    </div>
+                    <span>Live notification</span>
+                  </div>
+                ))}
+              <div className="request-cards">
+                {open
+                  .filter(
+                    (r) =>
+                      donor.available &&
+                      r.bloodGroup === donor.bloodGroup &&
+                      distance(donor.location, r.location) <= r.radiusKm,
+                  )
+                  .map((r) => (
+                    <article className="request-card" key={r.id}>
+                      <div className="request-card-top">
+                        <span
+                          className={`badge ${r.urgency === "Urgent" ? "urgent" : "scheduled"}`}
+                        >
+                          {r.urgency} request
+                        </span>
+                        <small>{r.id}</small>
+                      </div>
+                      <div className="request-card-title">
+                        <span className="big-blood">{r.bloodGroup}</span>
+                        <div>
+                          <h3>{hospital(r.hospitalId).name}</h3>
+                          <p>
+                            <MapPin size={14} />
+                            {hospital(r.hospitalId).area}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="request-facts">
+                        <div>
+                          <b>
+                            {distance(donor.location, r.location).toFixed(2)} km
+                          </b>
+                          <small>from your location</small>
+                        </div>
+                        <div>
+                          <b>
+                            {r.units} {r.units === 1 ? "unit" : "units"}
+                          </b>
+                          <small>requested</small>
+                        </div>
+                        <div>
+                          <b>
+                            {r.acceptedDonors.length}/{r.units}
+                          </b>
+                          <small>donors confirmed</small>
+                        </div>
+                      </div>
+                      <p className="medical-note">
+                        Responding shares your intent to help, not medical
+                        eligibility. The hospital confirms suitability and next
+                        steps.
+                      </p>
+                      <button
+                        className="primary wide"
+                        disabled={
+                          busy ||
+                          r.acceptedDonors.includes(donorId) ||
+                          r.acceptedDonors.length >= r.units
+                        }
+                        onClick={() =>
+                          action(`/requests/${r.id}/accept`, "POST", {
+                            donorId,
+                          })
+                        }
+                      >
+                        {r.acceptedDonors.includes(donorId) ? (
+                          <>
+                            <Check size={17} />
+                            Response confirmed
+                          </>
+                        ) : r.acceptedDonors.length >= r.units ? (
+                          "All places reserved"
+                        ) : (
+                          <>
+                            <HeartHandshake size={18} />I can help
+                          </>
+                        )}
+                      </button>
+                    </article>
+                  ))}
+              </div>
+              {!open.some(
+                (r) =>
+                  donor.available &&
+                  r.bloodGroup === donor.bloodGroup &&
+                  distance(donor.location, r.location) <= r.radiusKm,
+              ) && (
+                <div className="panel empty">
+                  <HeartHandshake size={35} />
+                  <h3>No matching requests right now</h3>
+                  <p>
+                    {donor.available
+                      ? "You will receive a live alert when a matching nearby request is created."
+                      : "Switch your availability on to receive matching requests."}
+                  </p>
+                  <button
+                    className="text-button"
+                    onClick={() => setModal(true)}
+                  >
+                    Create a demo request
+                    <Plus size={16} />
+                  </button>
+                </div>
+              )}
+            </>
+          )}
           <footer>
             <span>
               <Droplet size={13} /> LifeLink · Built for community, designed for
