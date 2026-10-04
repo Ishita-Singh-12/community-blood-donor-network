@@ -104,4 +104,4 @@ Before a real deployment, add authenticated accounts, role-based authorization, 
 
 ## Deployment preparation
 
-See [deployment/README.md](deployment/README.md) for a Render static frontend + free Node web service + persistent MongoDB setup. The frontend points to a live backend; it does not try to run Node.js inside static hosting.
+See [deployment/README.md](deployment/README.md) for GitHub Pages + Render backend + persistent MongoDB setup. The manual Pages workflow requires a responding backend URL. Render static hosting is not used.

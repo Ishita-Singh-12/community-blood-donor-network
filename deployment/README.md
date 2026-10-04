@@ -1,59 +1,47 @@
-# Deploy on Render with MongoDB Atlas
+# Split deployment: GitHub Pages + Node backend + MongoDB
 
-The deployment uses two Render services: a static React frontend and a free Node.js web service, plus an Atlas Free database. This config does not create accounts or deploy by itself.
+These files prepare deployment; they do not create accounts, buy services or deploy by themselves. The Pages workflow is manual and stops if no responding backend URL has been configured.
 
-Use fictional data only. This is an unauthenticated public portfolio demo. Visitors can change shared donor, request and inventory data; rate limits are not authorization. Do not add real health or location data.
+## Required services
 
-## Database
+- GitHub Pages for the React build.
+- A Node web service that supports Socket.IO/WebSockets, such as Render.
+- A dedicated persistent MongoDB database, such as an Atlas Free cluster.
 
-1. Create an Atlas Free cluster and a dedicated database user for this project.
-2. Allow the Render service's outbound addresses where possible. Use a dedicated database, never an existing production database.
-3. Put the connection string only in the backend's `MONGODB_URI` secret environment setting. Never commit it, put it in chat or expose it as a `VITE_*` variable.
+A public portfolio demo should contain fictional data only. There is no authentication or role isolation in this demo; visitors can change shared demo data. Rate limits reduce casual misuse but are not authorization. Do not put real donor, hospital or patient data here.
 
-## Backend web service
+## Backend
 
-Create a **Web Service** from this repository and choose **Free**, not a paid instance. `deployment/render.yaml` documents the settings and can also be imported as a Blueprint.
+1. Create a MongoDB Atlas Free cluster and a dedicated database user. Allow only the hosting service's outbound addresses when possible. Save the connection string in the host's secret environment settings, not GitHub source or chat.
+2. Import `deployment/render.yaml` in Render, or create a free Node web service from this repository manually.
+3. Build: `npm ci && npm run build`. Start: `npm start`. Health endpoint: `/api/health`.
+4. Environment: `NODE_ENV=production`, `HOST=0.0.0.0`, `TRUST_PROXY=1`, `MONGODB_URI` as a secret, and `CLIENT_ORIGIN` set to the actual Pages origin (scheme and hostname, no repository path).
+5. The host supplies `PORT`. Never replace its value with the local demo port.
+6. Check `/api/health` reports `database: connected`, then verify state and Socket.IO from a frontend browser.
 
-- Build command: `npm ci && npm run build`
-- Start command: `npm start`
-- Health path: `/api/health`
-- `NODE_ENV=production`
-- `HOST=0.0.0.0`
-- `TRUST_PROXY=1` (Render's reverse proxy)
-- `CLIENT_ORIGIN`: the actual frontend origin, including `https://` and hostname, without a trailing slash or path.
-- `MONGODB_URI`: secret Atlas connection string.
+Render Free services sleep after 15 minutes without traffic and may take about a minute to wake. Their disk is ephemeral and their RAM is limited. Hosted mode requires `MONGODB_URI` and refuses to fall back to a temporary MongoDB process. These limits mean this is a portfolio demo, not reliable emergency infrastructure.
 
-Render supplies `PORT`. Hosted mode refuses to use temporary MongoDB. Check that the actual backend `/api/health` returns `database: connected` before setting up the frontend.
+## Frontend
 
-## Static frontend
+1. Set repository Actions variable `VITE_API_URL` to the verified HTTPS backend URL without a trailing slash. This URL is public, not a secret. Never put database credentials in frontend variables.
+2. Configure Pages source as **GitHub Actions**.
+3. Run **Deploy frontend to GitHub Pages** manually. Vite uses the repository name as its base path so assets work below a project Pages URL.
+4. Open the actual deployment URL returned by GitHub. Verify request creation, donor alert and acceptance across separate tabs, not only that the HTML loads.
 
-Create a **Static Site** from this same repository.
-
-- Build command: `npm ci && npm run build`
-- Publish directory: `dist`
-- `VITE_API_URL`: actual HTTPS backend origin. This is public configuration, not a secret.
-- Rewrite `/*` to `/index.html`.
-
-The static site does not use the free web service's idle-sleep behavior. No GitHub Pages workflow or extra GitHub workflow permission is needed.
-
-Update backend `CLIENT_ORIGIN` to the final static-site origin. Deploy both services and test real request creation, Socket.IO donor alerts and acceptance from separate browser tabs at the public frontend URL.
-
-## Availability monitoring
-
-Render Free web services can sleep after 15 minutes without incoming traffic, cold-start and restart or suspend at limits. Ordinary external HTTP uptime checks on `/api/health` can reduce idle sleep if the provider permits them, but they cannot guarantee uninterrupted availability. Configure a free external monitor only after verifying that plan, account and monitoring scope; do not add paid plans or cards. A paid instance also cannot guarantee 100% uptime.
-
-Free usage quotas are shared across a workspace. Existing services may consume some of the included hours, build minutes or bandwidth. Verify workspace usage and billing controls before deploying. No emergency-service reliability is claimed.
-
-## Local build
+## Local build check
 
 ```bash
-VITE_API_URL=http://127.0.0.1:4173 npm run build
+VITE_API_URL=http://127.0.0.1:4173 VITE_BASE_PATH=/community-blood-donor-network/ npm run build
 ```
 
-This produces the static client bundle. The API still needs a separate running server. `npm run demo` continues to serve both locally from one process.
+That prepares the static bundle only. The backend must still run separately. Default `npm run demo` remains same-origin local hosting.
 
-## Hosting references
+## Current sources for hosting limits
 
+- GitHub Pages is static: https://docs.github.com/en/pages/getting-started-with-github-pages/about-github-pages
 - Render Free limits: https://render.com/docs/free
-- Render static sites: https://render.com/docs/static-sites
 - Atlas Free cluster setup: https://www.mongodb.com/docs/atlas/tutorial/deploy-free-tier-cluster/
+
+## Shared free-hour pool
+
+The workspace includes other projects. A 24/7 service can consume 744 of 750 monthly free hours in a 31-day month, leaving only six hours for other services. Do not enable continuous pings without an approved quota-safe monitoring window. Do not suspend or change other projects to make room.

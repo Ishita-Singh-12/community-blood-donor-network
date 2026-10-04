@@ -1,4 +1,4 @@
-# Two free services. Supply actual host URLs and database secret during setup.
+# Preparation only: import this Blueprint after approving Render + Atlas setup.
 services:
   - type: web
     name: lifelink-api
@@ -18,15 +18,3 @@ services:
         sync: false
       - key: MONGODB_URI
         sync: false
-  - type: web
-    name: lifelink-dashboard
-    runtime: static
-    buildCommand: npm ci && npm run build
-    staticPublishPath: ./dist
-    envVars:
-      - key: VITE_API_URL
-        sync: false
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
