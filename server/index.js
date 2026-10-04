@@ -1,4 +1,5 @@
 import express from "express";
+import cors from "cors";
 import http from "node:http";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -47,6 +48,11 @@ const Inventory = mongoose.model(
     { versionKey: false },
   ),
 );
+if (process.env.NODE_ENV === "production" && !process.env.MONGODB_URI) {
+  throw new Error(
+    "MONGODB_URI is required for a hosted backend. Temporary MongoDB is local-demo only.",
+  );
+}
 let memory;
 if (!process.env.MONGODB_URI)
   memory = await MongoMemoryServer.create({ binary: { version: "7.0.14" } });
@@ -60,7 +66,18 @@ if ((await Donor.countDocuments()) === 0) {
 }
 const app = express(),
   server = http.createServer(app),
-  io = new Server(server);
+  io = new Server(server, {
+    cors: { origin: process.env.CLIENT_ORIGIN || false },
+  });
+if (process.env.CLIENT_ORIGIN) {
+  app.use(
+    cors({
+      origin: process.env.CLIENT_ORIGIN,
+      methods: ["GET", "POST", "PATCH", "OPTIONS"],
+    }),
+  );
+}
+if (process.env.TRUST_PROXY === "1") app.set("trust proxy", 1);
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: "20kb" }));
 app.use(

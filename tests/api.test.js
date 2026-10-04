@@ -179,3 +179,31 @@ test("Availability and inventory updates persist and broadcast to another connec
     socket.close();
   }
 });
+
+test("Hosted API CORS permits only the configured frontend origin", async () => {
+  const allowed = await fetch(base + "/api/health", {
+    headers: { Origin: "http://localhost:5173" },
+  });
+  assert.equal(
+    allowed.headers.get("access-control-allow-origin"),
+    "http://localhost:5173",
+  );
+  const other = await fetch(base + "/api/health", {
+    headers: { Origin: "https://unrelated.invalid" },
+  });
+  assert.notEqual(
+    other.headers.get("access-control-allow-origin"),
+    "https://unrelated.invalid",
+  );
+  const preflight = await fetch(base + "/api/requests", {
+    method: "OPTIONS",
+    headers: {
+      Origin: "http://localhost:5173",
+      "Access-Control-Request-Method": "POST",
+    },
+  });
+  assert.equal(preflight.status, 204);
+  assert.ok(
+    preflight.headers.get("access-control-allow-methods").includes("POST"),
+  );
+});

@@ -13,6 +13,8 @@ const env = {
   TEST_URL: `http://127.0.0.1:${port}`,
 };
 delete env.MONGODB_URI;
+env.NODE_ENV = "test";
+env.CLIENT_ORIGIN = "http://localhost:5173";
 const backend = spawn(process.execPath, ["server/index.js"], {
   env,
   stdio: ["ignore", "pipe", "pipe"],
