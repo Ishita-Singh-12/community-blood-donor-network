@@ -744,6 +744,19 @@ function App() {
             </section>
           )}
           {page === "Donor directory" && Donors()}
+          {page === "Blood requests" && (
+            <section className="panel">
+              <div className="section-heading">
+                <div>
+                  <h2>All requests</h2>
+                  <p>
+                    {open.length} active · {data.requests.length} total
+                  </p>
+                </div>
+              </div>
+              {RequestsTable({ all: true })}
+            </section>
+          )}
           <footer>
             <span>
               <Droplet size={13} /> LifeLink · Built for community, designed for
@@ -765,6 +778,218 @@ function App() {
           {toast}
         </div>
       )}
+      {modal && (
+        <div
+          className="modal-backdrop"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setModal(false);
+          }}
+        >
+          <section
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="request-title"
+          >
+            <button
+              className="modal-close icon-button"
+              aria-label="Close request form"
+              onClick={() => setModal(false)}
+            >
+              <X size={20} />
+            </button>
+            <span className="modal-icon">
+              <Droplet size={26} />
+            </span>
+            <h2 id="request-title">Create a blood request</h2>
+            <p>Reach available, exact-group donors closest to your hospital.</p>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const f = new FormData(e.currentTarget);
+                setBusy(true);
+                setError("");
+                try {
+                  const result = await api("/requests", "POST", {
+                    hospitalId: f.get("hospitalId"),
+                    bloodGroup: f.get("bloodGroup"),
+                    units: Number(f.get("units")),
+                    urgency: f.get("urgency"),
+                    purpose: f.get("purpose"),
+                    radiusKm: Number(f.get("radiusKm")),
+                  });
+                  setModal(false);
+                  setToast(
+                    `${result.matches.length} nearby donors notified, ordered nearest first.`,
+                  );
+                } catch (err) {
+                  setError(err.message);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              <label>
+                Hospital
+                <select name="hospitalId">
+                  {data.hospitals.map((h) => (
+                    <option key={h.id} value={h.id}>
+                      {h.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="form-row">
+                <label>
+                  Blood group
+                  <select name="bloodGroup" defaultValue="O+">
+                    {groups.map((g) => (
+                      <option key={g}>{g}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Units needed
+                  <input
+                    name="units"
+                    type="number"
+                    min="1"
+                    max="10"
+                    defaultValue="2"
+                    required
+                  />
+                </label>
+              </div>
+              <div className="form-row">
+                <label>
+                  Priority
+                  <select name="urgency">
+                    <option>Urgent</option>
+                    <option>Standard</option>
+                  </select>
+                </label>
+                <label>
+                  Search radius (km)
+                  <input
+                    name="radiusKm"
+                    type="number"
+                    min="1"
+                    max="50"
+                    defaultValue="15"
+                    required
+                  />
+                </label>
+              </div>
+              <label>
+                Request for
+                <select name="purpose">
+                  <option>Hospital requirement</option>
+                  <option>Patient requirement</option>
+                </select>
+              </label>
+              <div className="note">
+                <Radio size={17} />
+                Matching donors receive a live in-app notification.
+              </div>
+              {error && (
+                <p className="red" role="alert">
+                  {error}
+                </p>
+              )}
+              <button className="primary wide" disabled={busy}>
+                {busy ? "Sending..." : "Create & notify donors"}
+                <ArrowUpRight size={17} />
+              </button>
+            </form>
+          </section>
+        </div>
+      )}
+      {focusRequest &&
+        (() => {
+          const r = data.requests.find((x) => x.id === focusRequest.id);
+          const matches = available
+            .filter((d) => d.bloodGroup === r.bloodGroup)
+            .map((d) => ({ ...d, distance: distance(d.location, r.location) }))
+            .filter((d) => d.distance <= r.radiusKm)
+            .sort((a, b) => a.distance - b.distance);
+          return (
+            <div className="modal-backdrop">
+              <section
+                className="modal request-detail"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Request details"
+              >
+                <button
+                  className="modal-close icon-button"
+                  aria-label="Close request details"
+                  onClick={() => setFocusRequest(null)}
+                >
+                  <X size={20} />
+                </button>
+                <span className="eyebrow">{r.id}</span>
+                <h2>
+                  {r.bloodGroup} · {hospital(r.hospitalId).name}
+                </h2>
+                <p>
+                  {r.units} units requested · {r.radiusKm} km search radius
+                </p>
+                {badge(r.status)}
+                <h3 className="detail-subtitle">
+                  Matching donors, nearest first
+                </h3>
+                {matches.map((d, i) => (
+                  <div className="nearby-row" key={d.id}>
+                    <span className="rank">{i + 1}</span>
+                    <div>
+                      <b>{d.name}</b>
+                      <small>
+                        {d.area} · {d.distance.toFixed(2)} km away
+                      </small>
+                    </div>
+                    {r.acceptedDonors.includes(d.id) && (
+                      <span className="badge fulfilled">Confirmed</span>
+                    )}
+                  </div>
+                ))}
+                {!matches.length && (
+                  <p>No available exact-group donors in range.</p>
+                )}
+                {["Open", "Scheduled"].includes(r.status) && (
+                  <div className="form-row detail-actions">
+                    <button
+                      className="primary"
+                      disabled={busy}
+                      onClick={() =>
+                        action(`/requests/${r.id}/status`, "PATCH", {
+                          status: "Fulfilled",
+                        })
+                      }
+                    >
+                      <Check size={17} />
+                      Mark fulfilled
+                    </button>
+                    <button
+                      className="secondary"
+                      disabled={busy}
+                      onClick={() =>
+                        action(`/requests/${r.id}/status`, "PATCH", {
+                          status: "Cancelled",
+                        })
+                      }
+                    >
+                      Cancel request
+                    </button>
+                  </div>
+                )}
+                <p className="medical-note">
+                  Fulfillment is a coordinator decision after verified
+                  collection. It does not automatically change inventory.
+                </p>
+              </section>
+            </div>
+          );
+        })()}
     </div>
   );
 }
