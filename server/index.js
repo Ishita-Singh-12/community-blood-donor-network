@@ -192,6 +192,70 @@ io.on("connection", (socket) => {
     ack?.({ ok: true });
   });
 });
+app.post(
+  "/api/requests/:id/accept",
+  route(async (req, res) => {
+    const { donorId } = z
+      .object({ donorId: z.string().max(40) })
+      .strict()
+      .parse(req.body);
+    const request = await Request.findOne({ id: req.params.id }).lean();
+    if (!request) return res.status(404).json({ error: "Request not found" });
+    const donor = await Donor.findOne({ id: donorId }).lean();
+    if (!donor || !matchDonors([donor], request).length)
+      return res.status(409).json({
+        error: "This donor is not an available exact-group match in range.",
+      });
+    // Single MongoDB update avoids duplicate acceptance and overbooking under concurrent responses.
+    const updated = await Request.findOneAndUpdate(
+      {
+        id: req.params.id,
+        status: { $in: ["Open", "Scheduled"] },
+        acceptedDonors: { $ne: donorId },
+        $expr: { $lt: [{ $size: "$acceptedDonors" }, "$units"] },
+      },
+      [
+        {
+          $set: {
+            acceptedDonors: { $concatArrays: ["$acceptedDonors", [donorId]] },
+            status: "Scheduled",
+          },
+        },
+      ],
+      { new: true },
+    );
+    if (!updated)
+      return res.status(409).json({
+        error:
+          "Already accepted, closed, or all requested places are reserved.",
+      });
+    await broadcast();
+    io.emit("activity", {
+      message: `${donor.name} accepted ${request.bloodGroup} request. Hospital dashboard updated.`,
+    });
+    res.json(updated);
+  }),
+);
+app.patch(
+  "/api/requests/:id/status",
+  route(async (req, res) => {
+    const { status } = z
+      .object({ status: z.enum(["Fulfilled", "Cancelled"]) })
+      .strict()
+      .parse(req.body);
+    const request = await Request.findOneAndUpdate(
+      { id: req.params.id, status: { $in: ["Open", "Scheduled"] } },
+      { status },
+      { new: true },
+    );
+    if (!request)
+      return res
+        .status(409)
+        .json({ error: "Request is already closed or does not exist." });
+    await broadcast();
+    res.json(request);
+  }),
+);
 app.use(express.static(path.resolve("dist")));
 app.get("*", (req, res) =>
   req.path.startsWith("/api")
