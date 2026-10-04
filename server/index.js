@@ -165,33 +165,6 @@ app.patch(
     res.json(donor);
   }),
 );
-app.patch(
-  "/api/inventory/:group",
-  route(async (req, res) => {
-    const group = z.enum(BLOOD_GROUPS).parse(req.params.group);
-    const { units } = z
-      .object({ units: z.number().int().min(0).max(200) })
-      .strict()
-      .parse(req.body);
-    const item = await Inventory.findOneAndUpdate(
-      { bloodGroup: group },
-      { units },
-      { new: true },
-    );
-    await broadcast();
-    res.json(item);
-  }),
-);
-io.on("connection", (socket) => {
-  socket.on("donor:join", async (id, ack) => {
-    if (typeof id !== "string" || !(await Donor.exists({ id })))
-      return ack?.({ ok: false });
-    for (const room of socket.rooms)
-      if (room.startsWith("donor:")) socket.leave(room);
-    socket.join(`donor:${id}`);
-    ack?.({ ok: true });
-  });
-});
 app.post(
   "/api/requests/:id/accept",
   route(async (req, res) => {
@@ -256,6 +229,33 @@ app.patch(
     res.json(request);
   }),
 );
+app.patch(
+  "/api/inventory/:group",
+  route(async (req, res) => {
+    const group = z.enum(BLOOD_GROUPS).parse(req.params.group);
+    const { units } = z
+      .object({ units: z.number().int().min(0).max(200) })
+      .strict()
+      .parse(req.body);
+    const item = await Inventory.findOneAndUpdate(
+      { bloodGroup: group },
+      { units },
+      { new: true },
+    );
+    await broadcast();
+    res.json(item);
+  }),
+);
+io.on("connection", (socket) => {
+  socket.on("donor:join", async (id, ack) => {
+    if (typeof id !== "string" || !(await Donor.exists({ id })))
+      return ack?.({ ok: false });
+    for (const room of socket.rooms)
+      if (room.startsWith("donor:")) socket.leave(room);
+    socket.join(`donor:${id}`);
+    ack?.({ ok: true });
+  });
+});
 app.use(express.static(path.resolve("dist")));
 app.get("*", (req, res) =>
   req.path.startsWith("/api")
