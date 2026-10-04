@@ -109,6 +109,35 @@ app.get(
   "/api/state",
   route(async (_, res) => res.json(await state())),
 );
+app.get(
+  "/api/requests/:id/matches",
+  route(async (req, res) => {
+    const request = await Request.findOne({ id: req.params.id }).lean();
+    if (!request) return res.status(404).json({ error: "Request not found" });
+    res.json(matchDonors(clean(await Donor.find().lean()), request));
+  }),
+);
+app.post(
+  "/api/requests",
+  route(async (req, res) => {
+    const input = requestInput.parse(req.body),
+      hospital = hospitals.find((h) => h.id === input.hospitalId);
+    const request = await Request.create({
+      ...input,
+      id: `REQ-${randomUUID().slice(0, 8).toUpperCase()}`,
+      status: "Open",
+      location: hospital.location,
+      createdAt: new Date(),
+      acceptedDonors: [],
+    });
+    const matches = matchDonors(
+      clean(await Donor.find().lean()),
+      request.toObject(),
+    );
+    await broadcast();
+    res.status(201).json({ request: request.toObject(), matches });
+  }),
+);
 app.use(express.static(path.resolve("dist")));
 app.get("*", (req, res) =>
   req.path.startsWith("/api")
