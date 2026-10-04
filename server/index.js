@@ -8,7 +8,7 @@ import { Server } from "socket.io";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
-import { BLOOD_GROUPS } from "./matching.js";
+import { BLOOD_GROUPS, matchDonors } from "./matching.js";
 import { hospitals, donors, inventory, seededRequests } from "./seed.js";
 
 const donorSchema = new mongoose.Schema(
