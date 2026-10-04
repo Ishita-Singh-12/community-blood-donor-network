@@ -138,6 +138,40 @@ app.post(
     res.status(201).json({ request: request.toObject(), matches });
   }),
 );
+app.patch(
+  "/api/donors/:id",
+  route(async (req, res) => {
+    const { available } = z
+      .object({ available: z.boolean() })
+      .strict()
+      .parse(req.body);
+    const donor = await Donor.findOneAndUpdate(
+      { id: req.params.id },
+      { available },
+      { new: true },
+    );
+    if (!donor) return res.status(404).json({ error: "Donor not found" });
+    await broadcast();
+    res.json(donor);
+  }),
+);
+app.patch(
+  "/api/inventory/:group",
+  route(async (req, res) => {
+    const group = z.enum(BLOOD_GROUPS).parse(req.params.group);
+    const { units } = z
+      .object({ units: z.number().int().min(0).max(200) })
+      .strict()
+      .parse(req.body);
+    const item = await Inventory.findOneAndUpdate(
+      { bloodGroup: group },
+      { units },
+      { new: true },
+    );
+    await broadcast();
+    res.json(item);
+  }),
+);
 app.use(express.static(path.resolve("dist")));
 app.get("*", (req, res) =>
   req.path.startsWith("/api")
