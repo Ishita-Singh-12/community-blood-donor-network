@@ -135,6 +135,16 @@ app.post(
       request.toObject(),
     );
     await broadcast();
+    for (const donor of matches)
+      io.to(`donor:${donor.id}`).emit("donor:alert", {
+        request: request.toObject(),
+        hospital,
+        distanceKm: donor.distanceKm,
+        rank: matches.findIndex((d) => d.id === donor.id) + 1,
+      });
+    io.emit("activity", {
+      message: `${request.bloodGroup} request created. ${matches.length} nearby donors notified.`,
+    });
     res.status(201).json({ request: request.toObject(), matches });
   }),
 );
@@ -172,6 +182,16 @@ app.patch(
     res.json(item);
   }),
 );
+io.on("connection", (socket) => {
+  socket.on("donor:join", async (id, ack) => {
+    if (typeof id !== "string" || !(await Donor.exists({ id })))
+      return ack?.({ ok: false });
+    for (const room of socket.rooms)
+      if (room.startsWith("donor:")) socket.leave(room);
+    socket.join(`donor:${id}`);
+    ack?.({ ok: true });
+  });
+});
 app.use(express.static(path.resolve("dist")));
 app.get("*", (req, res) =>
   req.path.startsWith("/api")
