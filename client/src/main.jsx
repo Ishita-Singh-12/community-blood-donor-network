@@ -723,6 +723,27 @@ function App() {
               </section>
             </>
           )}
+          {page === "Blood inventory" && (
+            <section className="panel">
+              <div className="section-heading">
+                <div>
+                  <h2>Community inventory</h2>
+                  <p>
+                    Edit a unit count, then leave the field to save. Updates
+                    appear in every connected dashboard.
+                  </p>
+                </div>
+                <span className="subtle-tag">{stock} units total</span>
+              </div>
+              {Inventory({ editable: true })}
+              <div className="note">
+                <ShieldCheck size={17} />
+                Stock is coordinator-entered. A donor response does not add a
+                blood unit; collection and testing must happen first.
+              </div>
+            </section>
+          )}
+          {page === "Donor directory" && Donors()}
           <footer>
             <span>
               <Droplet size={13} /> LifeLink · Built for community, designed for
