@@ -14,7 +14,7 @@ A public portfolio demo should contain fictional data only. There is no authenti
 
 1. Create a MongoDB Atlas Free cluster and a dedicated database user. Allow only the hosting service's outbound addresses when possible. Save the connection string in the host's secret environment settings, not GitHub source or chat.
 2. Import `deployment/render.yaml` in Render, or create a free Node web service from this repository manually.
-3. Build: `npm ci && npm run build`. Start: `npm start`. Health endpoint: `/api/health`.
+3. Build: `npm ci --include=dev && npm run build`. Start: `npm start`. Health endpoint: `/api/health`.
 4. Environment: `NODE_ENV=production`, `HOST=0.0.0.0`, `TRUST_PROXY=1`, `MONGODB_URI` as a secret, and `CLIENT_ORIGIN` set to the actual Pages origin (scheme and hostname, no repository path).
 5. The host supplies `PORT`. Never replace its value with the local demo port.
 6. Check `/api/health` reports `database: connected`, then verify state and Socket.IO from a frontend browser.
