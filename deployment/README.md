@@ -45,3 +45,7 @@ That prepares the static bundle only. The backend must still run separately. Def
 ## Shared free-hour pool
 
 The workspace includes other projects. A 24/7 service can consume 744 of 750 monthly free hours in a 31-day month, leaving only six hours for other services. Do not enable continuous pings without an approved quota-safe monitoring window. Do not suspend or change other projects to make room.
+
+## Selected availability mode
+
+Deploy without keep-alive pings or external uptime-monitor traffic. The free Render backend can sleep while idle and take about a minute to wake when the demo is opened. The frontend remains static. No automatic monitoring window or always-on guarantee is configured.
