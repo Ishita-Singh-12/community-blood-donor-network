@@ -1,0 +1,41 @@
+{
+  "name": "blood-donor-network",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A real-time blood donor coordination dashboard built with React, Node.js, Socket.IO and MongoDB.",
+  "type": "module",
+  "scripts": {
+    "dev": "node server/index.js",
+    "build": "vite build --config vite.config.js",
+    "start": "node server/index.js",
+    "demo": "npm run build && npm start",
+    "test": "node tests/run.mjs",
+    "test:ui": "npm run build && node tests/run.mjs --ui",
+    "format": "prettier --write client/src server tests vite.config.js package.json README.md",
+    "format:check": "prettier --check client/src server tests vite.config.js package.json README.md"
+  },
+  "dependencies": {
+    "@fontsource/dm-sans": "^5.3.0",
+    "@fontsource/manrope": "^5.3.0",
+    "express": "^4.21.2",
+    "express-rate-limit": "^8.1.0",
+    "helmet": "^8.1.0",
+    "lucide-react": "^0.468.0",
+    "mongodb-memory-server": "^10.2.1",
+    "mongoose": "^8.19.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.4",
+    "playwright": "^1.55.1",
+    "prettier": "^3.9.9",
+    "vite": "^7.1.7"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
