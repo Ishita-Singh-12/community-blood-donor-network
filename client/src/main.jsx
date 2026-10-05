@@ -29,11 +29,13 @@ import "@fontsource/dm-sans/700.css";
 import "@fontsource/manrope/700.css";
 import "@fontsource/manrope/800.css";
 import "./style.css";
+import {Account,Workflow} from "./Account.jsx";
 const apiOrigin = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
-const socket = io(apiOrigin || undefined);
+const socket = io(apiOrigin || undefined,{autoConnect:false,withCredentials:true});
 async function api(path, method = "GET", body) {
   const res = await fetch(`${apiOrigin}/api${path}`, {
     method,
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
   });
@@ -56,6 +58,7 @@ function distance(a, b) {
 }
 const groups = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 function App() {
+  const [user,setUser]=useState(undefined),[isDemo,setIsDemo]=useState(false);
   const [data, setData] = useState(null),
     [page, setPage] = useState("Overview"),
     [connected, setConnected] = useState(socket.connected),
@@ -69,7 +72,9 @@ function App() {
     [alerts, setAlerts] = useState([]),
     [focusRequest, setFocusRequest] = useState(null),
     [lastUpdated, setLastUpdated] = useState(new Date());
+  useEffect(()=>{api("/auth/me").then(r=>{setUser(r.user);setIsDemo(r.demo);}).catch(e=>setError(e.message));},[]);
   useEffect(() => {
+    if(!user)return;socket.connect();setPage(user.role==="donor"?"Donor portal":"Overview");if(user.donorId)setDonorId(user.donorId);
     setConnected(socket.connected);
     api("/state")
       .then(setData)
@@ -97,9 +102,9 @@ function App() {
       socket.off("connect", connect);
       socket.off("disconnect", disconnect);
       socket.off("donor:alert", alert);
-      socket.off("activity", activity);
+      socket.off("activity", activity);socket.disconnect();
     };
-  }, []);
+  }, [user]);
   useEffect(() => {
     const join = () => socket.emit("donor:join", donorId);
     join();
@@ -158,6 +163,7 @@ function App() {
       setBusy(false);
     }
   };
+  if(user===null)return <Account api={api} demo={isDemo} onSignedIn={setUser}/>;
   if (!data)
     return (
       <div className="loading">
@@ -184,19 +190,19 @@ function App() {
       ["Open", "Scheduled"].includes(r.status),
     ),
     stock = data.inventory.reduce((n, i) => n + i.units, 0),
-    donor = data.donors.find((d) => d.id === donorId);
+    donor = data.donors.find((d) => d.id === donorId)||{id:"",name:"Coordinator",bloodGroup:"",area:"",available:false,location:{lat:0,lng:0}};
   const filtered = data.donors.filter(
     (d) =>
       (group === "All groups" || d.bloodGroup === group) &&
       `${d.name} ${d.area}`.toLowerCase().includes(search.toLowerCase()),
   );
-  const nav = [
+  const nav = (user.role==="donor"?[["Donor portal",HeartHandshake],["Appointments",Clock]]:user.role==="admin"?[["Overview",LayoutDashboard],["Institution approvals",Building2]]:[
     ["Overview", LayoutDashboard],
     ["Donor directory", Users],
     ["Blood requests", ClipboardList],
     ["Blood inventory", Package],
-    ["Donor portal", HeartHandshake],
-  ];
+    ["Appointments",Clock],
+  ]);
   const hospital = (id) => data.hospitals.find((h) => h.id === id);
   const badge = (status) => (
     <span className={`badge ${status.toLowerCase()}`}>
@@ -272,7 +278,7 @@ function App() {
         {data.inventory.map((i) => (
           <div
             className={`blood-card ${i.units <= 3 ? "low" : ""}`}
-            key={i.bloodGroup}
+            key={i.hospitalId+"-"+i.bloodGroup}
           >
             <div className="blood-top">
               <span>{i.bloodGroup}</span>
@@ -288,7 +294,8 @@ function App() {
             <small className={i.units <= 3 ? "red" : ""}>
               {i.units <= 3 ? "Low stock" : "Available"}
             </small>
-            {editable && (
+            <small>{hospital(i.hospitalId)?.name} · Updated {new Date(i.updatedAt).toLocaleString()}</small>
+            {editable && user.role==="hospital" && (
               <label className="inventory-edit">
                 Set units
                 <input
@@ -436,10 +443,10 @@ function App() {
             <p>Connect the right donor to the right place, when it matters.</p>
           </div>
           <div className="profile">
-            <div className="avatar small">HC</div>
+            <button className="secondary" onClick={async()=>{await api("/auth/logout","POST");setData(null);setUser(null);socket.disconnect();}}>Sign out</button>
             <div>
-              <b>Hospital coordinator</b>
-              <small>Demo workspace</small>
+              <b>{user.name}</b>
+              <small>{user.role} account</small>
             </div>
             <ShieldCheck size={17} />
           </div>
@@ -466,7 +473,7 @@ function App() {
               <Bell size={19} />
               {alerts.length > 0 && <span>{alerts.length}</span>}
             </button>
-            <div className="avatar small">HC</div>
+            <button className="secondary" onClick={async()=>{await api("/auth/logout","POST");setData(null);setUser(null);socket.disconnect();}}>Sign out</button>
           </div>
         </header>
         <div className="content">
@@ -628,14 +635,14 @@ function App() {
                             28,
                             Math.min(
                               460,
-                              290 + (d.location.lng - 80.2579) * 2400,
+                              290 + ((d.location?.lng||0) - 80.2579) * 2400,
                             ),
                           ),
                           y = Math.max(
                             20,
                             Math.min(
                               215,
-                              112 - (d.location.lat - 13.0067) * 2500,
+                              112 - ((d.location?.lat||0) - 13.0067) * 2500,
                             ),
                           );
                         return (
@@ -741,6 +748,7 @@ function App() {
               </section>
             </>
           )}
+          {page === "Appointments" && <Workflow data={data} action={action} busy={busy}/>}
           {page === "Blood inventory" && (
             <section className="panel">
               <div className="section-heading">
@@ -796,20 +804,7 @@ function App() {
                   </p>
                 </div>
                 <div className="donor-controls">
-                  <label>
-                    Preview as donor
-                    <select
-                      aria-label="Preview as donor"
-                      value={donorId}
-                      onChange={(e) => setDonorId(e.target.value)}
-                    >
-                      {data.donors.map((d) => (
-                        <option value={d.id} key={d.id}>
-                          {d.name} ({d.bloodGroup})
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+
                   <button
                     className={`availability ${donor.available ? "is-available" : ""}`}
                     disabled={busy}
@@ -1044,8 +1039,8 @@ function App() {
             >
               <label>
                 Hospital
-                <select name="hospitalId">
-                  {data.hospitals.map((h) => (
+                <select name="hospitalId" defaultValue={user.hospitalId}>
+                  {data.hospitals.filter(h=>h.id===user.hospitalId).map((h) => (
                     <option key={h.id} value={h.id}>
                       {h.name}
                     </option>
@@ -1122,7 +1117,7 @@ function App() {
           const r = data.requests.find((x) => x.id === focusRequest.id);
           const matches = available
             .filter((d) => d.bloodGroup === r.bloodGroup)
-            .map((d) => ({ ...d, distance: distance(d.location, r.location) }))
+            .map((d) => ({ ...d, distance: distance(d.location||{lat:0,lng:0}, r.location) }))
             .filter((d) => d.distance <= r.radiusKm)
             .sort((a, b) => a.distance - b.distance);
           return (
@@ -1170,18 +1165,7 @@ function App() {
                 )}
                 {["Open", "Scheduled"].includes(r.status) && (
                   <div className="form-row detail-actions">
-                    <button
-                      className="primary"
-                      disabled={busy}
-                      onClick={() =>
-                        action(`/requests/${r.id}/status`, "PATCH", {
-                          status: "Fulfilled",
-                        })
-                      }
-                    >
-                      <Check size={17} />
-                      Mark fulfilled
-                    </button>
+                    <p>Confirm collection in Appointments to fulfill this request.</p>
                     <button
                       className="secondary"
                       disabled={busy}
