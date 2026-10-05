@@ -1,9 +1,9 @@
-import {randomBytes,scryptSync,timingSafeEqual,createHash,randomUUID} from 'node:crypto';
+import {randomBytes,timingSafeEqual,createHash,randomUUID} from 'node:crypto';
 import {promisify} from 'node:util';
 import {scrypt} from 'node:crypto';
 import {User,Session} from './models.js';
 const derive=promisify(scrypt);
-export function hashPassword(password){const salt=randomBytes(16).toString('hex');return salt+':'+scryptSync(password,salt,64).toString('hex');}
+export async function hashPassword(password){const salt=randomBytes(16).toString('hex');return salt+':'+(await derive(password,salt,64)).toString('hex');}
 export async function verifyPassword(password,hash){const[salt,expected]=hash.split(':');const actual=await derive(password,salt,64);return timingSafeEqual(actual,Buffer.from(expected,'hex'));}
 export const hashToken=token=>createHash('sha256').update(token).digest('hex');
 export const publicUser=u=>({id:u.id,name:u.name,email:u.email,role:u.role,donorId:u.donorId,hospitalId:u.hospitalId});

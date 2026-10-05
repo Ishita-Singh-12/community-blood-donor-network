@@ -24,7 +24,7 @@ if(memory&&await User.countDocuments()===0){
  await Hospital.insertMany(hospitals.map(h=>({...h,approved:true})));
  await Donor.insertMany(donors);await Request.insertMany(seededRequests().map(r=>({...r,collectedUnits:r.status==='Fulfilled'?r.units:0})));
  await Inventory.insertMany(hospitals.flatMap(h=>inventory.map(i=>({...i,hospitalId:h.id}))));
- const passwordHash=hashPassword('LifeLink-demo-2026!');
+ const passwordHash=await hashPassword('LifeLink-demo-2026!');
  await User.insertMany([{id:'admin-demo',email:'admin@lifelink.test',name:'Demo Administrator',role:'admin',passwordHash},...hospitals.map(h=>({id:'user-'+h.id,email:h.id+'@lifelink.test',name:h.name,role:'hospital',hospitalId:h.id,passwordHash})),...donors.map(d=>({id:'user-'+d.id,email:d.id+'@lifelink.test',name:d.name,role:'donor',donorId:d.id,passwordHash}))]);
 }
 const app=express(),server=http.createServer(app),io=new Server(server,{cors:{origin:process.env.CLIENT_ORIGIN||false,credentials:true}});
@@ -60,7 +60,7 @@ app.post('/api/auth/register',loginLimit,route(async(req,res)=>{
  const b=z.object({email:z.string().email().max(200),password:z.string().min(12).max(128),name:z.string().min(2).max(100),role:z.enum(['donor','hospital']),consent:z.literal(true),bloodGroup:z.enum(BLOOD_GROUPS).optional(),area:z.string().min(2).max(120),location}).strict().parse(req.body);
  if(await User.exists({email:b.email.toLowerCase()}))return res.status(409).json({error:'Account already exists'});
  if(b.role==='donor'&&!b.bloodGroup)return res.status(400).json({error:'Blood group required'});
- const profileId=id(b.role==='donor'?'D':'H');const user=await User.create({id:id('U'),email:b.email.toLowerCase(),passwordHash:hashPassword(b.password),name:b.name,role:b.role,consentAt:new Date(),...(b.role==='donor'?{donorId:profileId}:{hospitalId:profileId})});
+ const profileId=id(b.role==='donor'?'D':'H');const user=await User.create({id:id('U'),email:b.email.toLowerCase(),passwordHash:await hashPassword(b.password),name:b.name,role:b.role,consentAt:new Date(),...(b.role==='donor'?{donorId:profileId}:{hospitalId:profileId})});
  if(b.role==='donor')await Donor.create({id:profileId,userId:user.id,name:b.name,bloodGroup:b.bloodGroup,area:b.area,location:b.location,available:false});
  else{await Hospital.create({id:profileId,name:b.name,area:b.area,location:b.location,approved:false});await Inventory.insertMany(BLOOD_GROUPS.map(bloodGroup=>({hospitalId:profileId,bloodGroup,units:0})));}
  await setSession(res,user);res.status(201).json({user:publicUser(user)});
