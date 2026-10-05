@@ -1,314 +1,72 @@
-import express from "express";
-import cors from "cors";
-import http from "node:http";
-import { randomUUID } from "node:crypto";
-import path from "node:path";
-import mongoose from "mongoose";
-import { MongoMemoryServer } from "mongodb-memory-server";
-import { Server } from "socket.io";
-import helmet from "helmet";
-import rateLimit from "express-rate-limit";
-import { z } from "zod";
-import { BLOOD_GROUPS, matchDonors } from "./matching.js";
-import { hospitals, donors, inventory, seededRequests } from "./seed.js";
-
-const donorSchema = new mongoose.Schema(
-  {
-    id: { type: String, unique: true },
-    name: String,
-    bloodGroup: String,
-    area: String,
-    location: { lat: Number, lng: Number },
-    available: Boolean,
-  },
-  { versionKey: false },
-);
-const requestSchema = new mongoose.Schema(
-  {
-    id: { type: String, unique: true },
-    hospitalId: String,
-    bloodGroup: String,
-    units: Number,
-    urgency: String,
-    purpose: String,
-    status: String,
-    radiusKm: Number,
-    location: { lat: Number, lng: Number },
-    createdAt: Date,
-    acceptedDonors: [String],
-  },
-  { versionKey: false },
-);
-const Donor = mongoose.model("Donor", donorSchema);
-const Request = mongoose.model("Request", requestSchema);
-const Inventory = mongoose.model(
-  "Inventory",
-  new mongoose.Schema(
-    { bloodGroup: { type: String, unique: true }, units: Number },
-    { versionKey: false },
-  ),
-);
-if (process.env.NODE_ENV === "production" && !process.env.MONGODB_URI) {
-  throw new Error(
-    "MONGODB_URI is required for a hosted backend. Temporary MongoDB is local-demo only.",
-  );
+import express from 'express';
+import cors from 'cors';
+import http from 'node:http';
+import path from 'node:path';
+import mongoose from 'mongoose';
+import cookieParser from 'cookie-parser';
+import {MongoMemoryServer} from 'mongodb-memory-server';
+import {Server} from 'socket.io';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import {z} from 'zod';
+import {BLOOD_GROUPS,matchDonors} from './matching.js';
+import {hospitals,donors,inventory,seededRequests} from './seed.js';
+import {User,Session,Hospital,Donor,Request,Inventory,Audit,Appointment,Alert} from './models.js';
+import {hashPassword,verifyPassword,sessionUser,publicUser,setSession,hashToken,id,requireRole} from './auth.js';
+if(process.env.NODE_ENV==='production'&&!process.env.MONGODB_URI)throw Error('MONGODB_URI required');
+const memory=!process.env.MONGODB_URI?await MongoMemoryServer.create({binary:{version:'7.0.14'}}):null;
+await mongoose.connect(process.env.MONGODB_URI||memory.getUri('blood_donor_network_v2'));
+await Promise.all([User,Session,Hospital,Donor,Request,Inventory,Appointment,Alert].map(m=>m.init()));
+// Fictional demo accounts are seeded only in explicitly local temporary mode.
+if(memory&&await User.countDocuments()===0){
+ await Hospital.insertMany(hospitals.map(h=>({...h,approved:true})));
+ await Donor.insertMany(donors);await Request.insertMany(seededRequests().map(r=>({...r,collectedUnits:r.status==='Fulfilled'?r.units:0})));
+ await Inventory.insertMany(hospitals.flatMap(h=>inventory.map(i=>({...i,hospitalId:h.id}))));
+ const passwordHash=hashPassword('LifeLink-demo-2026!');
+ await User.insertMany([{id:'admin-demo',email:'admin@lifelink.test',name:'Demo Administrator',role:'admin',passwordHash},...hospitals.map(h=>({id:'user-'+h.id,email:h.id+'@lifelink.test',name:h.name,role:'hospital',hospitalId:h.id,passwordHash})),...donors.map(d=>({id:'user-'+d.id,email:d.id+'@lifelink.test',name:d.name,role:'donor',donorId:d.id,passwordHash}))]);
 }
-let memory;
-if (!process.env.MONGODB_URI)
-  memory = await MongoMemoryServer.create({ binary: { version: "7.0.14" } });
-await mongoose.connect(
-  process.env.MONGODB_URI || memory.getUri("blood_donor_network"),
-);
-if ((await Donor.countDocuments()) === 0) {
-  await Donor.insertMany(donors);
-  await Inventory.insertMany(inventory);
-  await Request.insertMany(seededRequests());
+const app=express(),server=http.createServer(app),io=new Server(server,{cors:{origin:process.env.CLIENT_ORIGIN||false,credentials:true}});
+if(process.env.CLIENT_ORIGIN)app.use(cors({origin:process.env.CLIENT_ORIGIN,credentials:true}));
+if(process.env.TRUST_PROXY==='1')app.set('trust proxy',1);
+app.use(helmet({contentSecurityPolicy:false}));app.use(express.json({limit:'30kb'}));app.use(cookieParser());app.use('/api',rateLimit({windowMs:60000,limit:180}));
+const route=fn=>(req,res,next)=>Promise.resolve(fn(req,res)).catch(next);
+app.use('/api',route(async(req,res,next)=>{const origin=req.headers.origin;if(!['GET','HEAD','OPTIONS'].includes(req.method)&&origin&&origin!==process.env.CLIENT_ORIGIN&&origin!==`${req.protocol}://${req.get('host')}`)return res.status(403).json({error:'Untrusted request origin'});req.user=await sessionUser(req.cookies.lifelink_session);next();}));
+const audit=(req,action,targetId,details={})=>Audit.create({actorId:req.user?.id,action,targetId,details});
+async function hospitalGuard(req,res,next){const h=await Hospital.findOne({id:req.user.hospitalId,approved:true});if(!h)return res.status(403).json({error:'Institution approval required'});req.hospital=h;next();}
+const clean=list=>list.map(({_id,...r})=>r);
+async function state(user){
+ const hospitalList=await Hospital.find(user.role==='admin'?{}:{approved:true}).lean();
+ let donorList=[],requests=[];
+ if(user.role==='donor'){
+  const donor=await Donor.findOne({id:user.donorId}).lean();donorList=donor?[donor]:[];
+  const all=await Request.find({status:{$in:['Open','Scheduled']}}).sort({createdAt:-1}).lean();
+  requests=all.filter(r=>r.acceptedDonors.includes(user.donorId)||(donor&&matchDonors([donor],r).length));
+ }else{requests=await Request.find(user.role==='hospital'?{hospitalId:user.hospitalId}:{}).sort({createdAt:-1}).lean();donorList=await Donor.find().lean();}
+ const stock=await Inventory.find(user.role==='hospital'?{hospitalId:user.hospitalId}:{}).lean();
+ // Coordinators receive approximate area/group and IDs, never donor email/exact coordinates.
+ if(user.role!=='donor')donorList=donorList.map(d=>({id:d.id,name:d.name,bloodGroup:d.bloodGroup,area:d.area,available:d.available}));
+ return {donors:clean(donorList),hospitals:clean(hospitalList),requests:clean(requests),inventory:clean(stock),demo:!!memory,user:publicUser(user),appointments:clean(await Appointment.find(user.role==='donor'?{donorId:user.donorId}:user.role==='hospital'?{hospitalId:user.hospitalId}:{}).lean())};
 }
-const app = express(),
-  server = http.createServer(app),
-  io = new Server(server, {
-    cors: { origin: process.env.CLIENT_ORIGIN || false },
-  });
-if (process.env.CLIENT_ORIGIN) {
-  app.use(
-    cors({
-      origin: process.env.CLIENT_ORIGIN,
-      methods: ["GET", "POST", "PATCH", "OPTIONS"],
-    }),
-  );
-}
-if (process.env.TRUST_PROXY === "1") app.set("trust proxy", 1);
-app.use(helmet({ contentSecurityPolicy: false }));
-app.use(express.json({ limit: "20kb" }));
-app.use(
-  "/api",
-  rateLimit({
-    windowMs: 60000,
-    limit: 120,
-    standardHeaders: "draft-8",
-    legacyHeaders: false,
-  }),
-);
-const clean = (list) => list.map(({ _id, ...r }) => r);
-async function state() {
-  return {
-    donors: clean(await Donor.find().lean()),
-    hospitals,
-    inventory: clean(await Inventory.find().lean()),
-    requests: clean(await Request.find().sort({ createdAt: -1 }).lean()),
-    demo: true,
-  };
-}
-async function broadcast() {
-  io.emit("state:update", await state());
-}
-const route = (fn) => (req, res, next) =>
-  Promise.resolve(fn(req, res)).catch(next);
-const requestInput = z
-  .object({
-    hospitalId: z.enum(["h1", "h2"]),
-    bloodGroup: z.enum(BLOOD_GROUPS),
-    units: z.number().int().min(1).max(10),
-    urgency: z.enum(["Urgent", "Standard"]),
-    purpose: z.enum(["Hospital requirement", "Patient requirement"]),
-    radiusKm: z.number().min(1).max(50),
-  })
-  .strict();
-app.get("/api/health", (_, res) =>
-  res.json({
-    ok: true,
-    database:
-      mongoose.connection.readyState === 1 ? "connected" : "disconnected",
-    demo: true,
-  }),
-);
-app.get(
-  "/api/state",
-  route(async (_, res) => res.json(await state())),
-);
-app.get(
-  "/api/requests/:id/matches",
-  route(async (req, res) => {
-    const request = await Request.findOne({ id: req.params.id }).lean();
-    if (!request) return res.status(404).json({ error: "Request not found" });
-    res.json(matchDonors(clean(await Donor.find().lean()), request));
-  }),
-);
-app.post(
-  "/api/requests",
-  route(async (req, res) => {
-    const input = requestInput.parse(req.body),
-      hospital = hospitals.find((h) => h.id === input.hospitalId);
-    const request = await Request.create({
-      ...input,
-      id: `REQ-${randomUUID().slice(0, 8).toUpperCase()}`,
-      status: "Open",
-      location: hospital.location,
-      createdAt: new Date(),
-      acceptedDonors: [],
-    });
-    const matches = matchDonors(
-      clean(await Donor.find().lean()),
-      request.toObject(),
-    );
-    await broadcast();
-    for (const donor of matches)
-      io.to(`donor:${donor.id}`).emit("donor:alert", {
-        request: request.toObject(),
-        hospital,
-        distanceKm: donor.distanceKm,
-        rank: matches.findIndex((d) => d.id === donor.id) + 1,
-      });
-    io.emit("activity", {
-      message: `${request.bloodGroup} request created. ${matches.length} nearby donors notified.`,
-    });
-    res.status(201).json({ request: request.toObject(), matches });
-  }),
-);
-app.patch(
-  "/api/donors/:id",
-  route(async (req, res) => {
-    const { available } = z
-      .object({ available: z.boolean() })
-      .strict()
-      .parse(req.body);
-    const donor = await Donor.findOneAndUpdate(
-      { id: req.params.id },
-      { available },
-      { new: true },
-    );
-    if (!donor) return res.status(404).json({ error: "Donor not found" });
-    await broadcast();
-    res.json(donor);
-  }),
-);
-app.post(
-  "/api/requests/:id/accept",
-  route(async (req, res) => {
-    const { donorId } = z
-      .object({ donorId: z.string().max(40) })
-      .strict()
-      .parse(req.body);
-    const request = await Request.findOne({ id: req.params.id }).lean();
-    if (!request) return res.status(404).json({ error: "Request not found" });
-    const donor = await Donor.findOne({ id: donorId }).lean();
-    if (!donor || !matchDonors([donor], request).length)
-      return res.status(409).json({
-        error: "This donor is not an available exact-group match in range.",
-      });
-    // Single MongoDB update avoids duplicate acceptance and overbooking under concurrent responses.
-    const updated = await Request.findOneAndUpdate(
-      {
-        id: req.params.id,
-        status: { $in: ["Open", "Scheduled"] },
-        acceptedDonors: { $ne: donorId },
-        $expr: { $lt: [{ $size: "$acceptedDonors" }, "$units"] },
-      },
-      [
-        {
-          $set: {
-            acceptedDonors: { $concatArrays: ["$acceptedDonors", [donorId]] },
-            status: "Scheduled",
-          },
-        },
-      ],
-      { new: true },
-    );
-    if (!updated)
-      return res.status(409).json({
-        error:
-          "Already accepted, closed, or all requested places are reserved.",
-      });
-    await broadcast();
-    io.emit("activity", {
-      message: `${donor.name} accepted ${request.bloodGroup} request. Hospital dashboard updated.`,
-    });
-    res.json(updated);
-  }),
-);
-app.patch(
-  "/api/requests/:id/status",
-  route(async (req, res) => {
-    const { status } = z
-      .object({ status: z.enum(["Fulfilled", "Cancelled"]) })
-      .strict()
-      .parse(req.body);
-    const request = await Request.findOneAndUpdate(
-      { id: req.params.id, status: { $in: ["Open", "Scheduled"] } },
-      { status },
-      { new: true },
-    );
-    if (!request)
-      return res
-        .status(409)
-        .json({ error: "Request is already closed or does not exist." });
-    await broadcast();
-    res.json(request);
-  }),
-);
-app.patch(
-  "/api/inventory/:group",
-  route(async (req, res) => {
-    const group = z.enum(BLOOD_GROUPS).parse(req.params.group);
-    const { units } = z
-      .object({ units: z.number().int().min(0).max(200) })
-      .strict()
-      .parse(req.body);
-    const item = await Inventory.findOneAndUpdate(
-      { bloodGroup: group },
-      { units },
-      { new: true },
-    );
-    await broadcast();
-    res.json(item);
-  }),
-);
-io.on("connection", (socket) => {
-  socket.on("donor:join", async (id, ack) => {
-    if (typeof id !== "string" || !(await Donor.exists({ id })))
-      return ack?.({ ok: false });
-    for (const room of socket.rooms)
-      if (room.startsWith("donor:")) socket.leave(room);
-    socket.join(`donor:${id}`);
-    ack?.({ ok: true });
-  });
-});
-app.use(express.static(path.resolve("dist")));
-app.get("*", (req, res) =>
-  req.path.startsWith("/api")
-    ? res.status(404).json({ error: "Endpoint not found" })
-    : res.sendFile(path.resolve("dist/index.html")),
-);
-app.use((err, req, res, next) => {
-  if (err instanceof z.ZodError)
-    return res.status(400).json({
-      error: "Please check the submitted values.",
-      details: err.issues.map((i) => ({
-        field: i.path.join("."),
-        message: i.message,
-      })),
-    });
-  console.error(err);
-  res.status(err.status === 400 ? 400 : 500).json({
-    error:
-      err.status === 400
-        ? "Invalid JSON"
-        : "Something went wrong. Please try again.",
-  });
-});
-server.listen(
-  Number(process.env.PORT || 4173),
-  process.env.HOST || "127.0.0.1",
-  () =>
-    console.log(
-      `Blood Donor Network running at http://127.0.0.1:${process.env.PORT || 4173} (MongoDB connected; demo data)`,
-    ),
-);
-for (const signal of ["SIGTERM", "SIGINT"])
-  process.on(signal, async () => {
-    io.close();
-    server.close();
-    await mongoose.disconnect();
-    await memory?.stop();
-    process.exit(0);
-  });
+async function broadcast(){for(const socket of io.sockets.sockets.values()){const user=await sessionUser(socket.data.token);if(!user){socket.disconnect(true);continue;}socket.emit('state:update',await state(user));}}
+app.get('/api/health',(_,res)=>res.json({ok:true,database:mongoose.connection.readyState===1?'connected':'disconnected',demo:!!memory}));
+app.get('/api/auth/me',(req,res)=>res.json({user:req.user?publicUser(req.user):null,demo:!!memory}));
+const loginLimit=rateLimit({windowMs:15*60000,limit:20});
+app.post('/api/auth/login',loginLimit,route(async(req,res)=>{const body=z.object({email:z.string().email().max(200),password:z.string().min(1).max(128)}).strict().parse(req.body);const user=await User.findOne({email:body.email.toLowerCase()});if(!user||!await verifyPassword(body.password,user.passwordHash))return res.status(401).json({error:'Invalid email or password'});await setSession(res,user);res.json({user:publicUser(user)});}));
+app.post('/api/auth/logout',route(async(req,res)=>{if(req.cookies.lifelink_session)await Session.deleteOne({hash:hashToken(req.cookies.lifelink_session)});res.clearCookie('lifelink_session',{path:'/'});res.json({ok:true});}));
+const location=z.object({lat:z.number().min(-90).max(90),lng:z.number().min(-180).max(180)}).strict();
+app.post('/api/auth/register',loginLimit,route(async(req,res)=>{
+ const b=z.object({email:z.string().email().max(200),password:z.string().min(12).max(128),name:z.string().min(2).max(100),role:z.enum(['donor','hospital']),consent:z.literal(true),bloodGroup:z.enum(BLOOD_GROUPS).optional(),area:z.string().min(2).max(120),location}).strict().parse(req.body);
+ if(await User.exists({email:b.email.toLowerCase()}))return res.status(409).json({error:'Account already exists'});
+ if(b.role==='donor'&&!b.bloodGroup)return res.status(400).json({error:'Blood group required'});
+ const profileId=id(b.role==='donor'?'D':'H');const user=await User.create({id:id('U'),email:b.email.toLowerCase(),passwordHash:hashPassword(b.password),name:b.name,role:b.role,consentAt:new Date(),...(b.role==='donor'?{donorId:profileId}:{hospitalId:profileId})});
+ if(b.role==='donor')await Donor.create({id:profileId,userId:user.id,name:b.name,bloodGroup:b.bloodGroup,area:b.area,location:b.location,available:false});
+ else{await Hospital.create({id:profileId,name:b.name,area:b.area,location:b.location,approved:false});await Inventory.insertMany(BLOOD_GROUPS.map(bloodGroup=>({hospitalId:profileId,bloodGroup,units:0})));}
+ await setSession(res,user);res.status(201).json({user:publicUser(user)});
+}));
+app.get('/api/admin/hospitals',requireRole('admin'),route(async(_,res)=>res.json({hospitals:await Hospital.find().lean()})));
+app.patch('/api/admin/hospitals/:id',requireRole('admin'),route(async(req,res)=>{const{approved}=z.object({approved:z.boolean()}).strict().parse(req.body);const h=await Hospital.findOneAndUpdate({id:req.params.id},{approved},{new:true});if(!h)return res.status(404).json({error:'Institution not found'});await audit(req,'hospital.approval',h.id,{approved});await broadcast();res.json(h);}));
+app.get('/api/state',requireRole('donor','hospital','admin'),route(async(req,res)=>res.json(await state(req.user))));
+app.patch('/api/donors/:id',requireRole('donor'),route(async(req,res)=>{if(req.params.id!==req.user.donorId)return res.status(403).json({error:'Not your donor profile'});const{available}=z.object({available:z.boolean()}).strict().parse(req.body);const d=await Donor.findOneAndUpdate({id:req.params.id},{available},{new:true});await broadcast();res.json(d);}));
+io.use(async(socket,next)=>{try{const cookie=socket.handshake.headers.cookie||'';const token=cookie.split(';').map(x=>x.trim()).find(x=>x.startsWith('lifelink_session='))?.slice(17);const user=await sessionUser(token);if(!user)return next(Error('Sign in required'));socket.data.user=user;socket.data.token=token;next();}catch{next(Error('Sign in required'));}});
+io.on('connection',socket=>{const u=socket.data.user;if(u.donorId)socket.join('donor:'+u.donorId);socket.join('user:'+u.id);socket.on('donor:join',(_,ack)=>ack?.({ok:true}));});
+// Feature routes follow below.

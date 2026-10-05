@@ -1,0 +1,12 @@
+import mongoose from 'mongoose';
+const make=(name,fields,indexes=[])=>{const schema=new mongoose.Schema(fields,{versionKey:false,timestamps:true});for(const [keys,opts]of indexes)schema.index(keys,opts);return mongoose.models[name]||mongoose.model(name,schema);};
+export const User=make('User',{id:{type:String,unique:true},email:{type:String,unique:true},name:String,passwordHash:String,role:String,donorId:String,hospitalId:String,consentAt:Date});
+export const Session=make('Session',{hash:{type:String,unique:true},userId:String,expiresAt:Date},[[{expiresAt:1},{expireAfterSeconds:0}]]);
+export const Hospital=make('Hospital',{id:{type:String,unique:true},name:String,area:String,location:{lat:Number,lng:Number},approved:Boolean});
+export const Donor=make('Donor',{id:{type:String,unique:true},name:String,bloodGroup:String,area:String,location:{lat:Number,lng:Number},available:Boolean,userId:String});
+export const Request=make('Request',{id:{type:String,unique:true},hospitalId:String,bloodGroup:String,units:Number,urgency:String,purpose:String,status:String,radiusKm:Number,location:{lat:Number,lng:Number},createdAt:Date,acceptedDonors:[String],collectedUnits:{type:Number,default:0}},[[{hospitalId:1,status:1},{}]]);
+export const Appointment=make('Appointment',{id:{type:String,unique:true},requestId:String,donorId:String,hospitalId:String,status:String,scheduledAt:Date,attendedAt:Date,collectedAt:Date,units:Number},[[{requestId:1,donorId:1},{unique:true}]]);
+export const Inventory=make('Inventory',{hospitalId:String,bloodGroup:String,units:Number,updatedBy:String},[[{hospitalId:1,bloodGroup:1},{unique:true}]]);
+export const Alert=make('Alert',{id:{type:String,unique:true},donorId:String,requestId:String,distanceKm:Number,rank:Number,seenAt:Date,respondedAt:Date},[[{donorId:1,requestId:1},{unique:true}]]);
+export const Audit=make('Audit',{actorId:String,action:String,targetId:String,details:mongoose.Schema.Types.Mixed});
+export const Subscription=make('Subscription',{userId:String,endpoint:{type:String,unique:true},keys:{p256dh:String,auth:String}});
