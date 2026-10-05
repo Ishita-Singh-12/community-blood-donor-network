@@ -42,6 +42,7 @@ try {
         "--test-concurrency=1",
         "tests/api.test.js",
         "tests/matching.test.js",
+        "tests/assistant.test.js",
       ];
   const code = await new Promise((resolve) =>
     spawn(process.execPath, args, { env, stdio: "inherit" }).on(
