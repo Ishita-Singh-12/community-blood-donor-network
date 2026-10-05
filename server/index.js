@@ -142,7 +142,8 @@ app.post('/api/push/subscriptions',requireRole('donor'),route(async(req,res)=>{
 }));
 app.delete('/api/push/subscriptions',requireRole('donor'),route(async(req,res)=>{await Subscription.deleteMany({userId:req.user.id});res.json({ok:true});}));
 app.post('/api/assistant/draft',requireRole('hospital'),route(hospitalGuard),rateLimit({windowMs:60000,limit:6}),route(async(req,res)=>{const{text}=z.object({text:z.string().min(5).max(500)}).strict().parse(req.body);res.json(await extractDraft(text));}));
-app.use(express.static(path.resolve('dist')));app.get('*',(req,res)=>req.path.startsWith('/api')?res.status(404).json({error:'Endpoint not found'}):res.sendFile(path.resolve('dist/index.html')));
+if(process.env.API_ONLY!=='1')app.use(express.static(path.resolve('dist')));
+app.get('*',(req,res)=>process.env.API_ONLY==='1'||req.path.startsWith('/api')?res.status(404).json({error:'Endpoint not found'}):res.sendFile(path.resolve('dist/index.html')));
 app.use((err,req,res,next)=>{if(err instanceof z.ZodError)return res.status(400).json({error:'Please check submitted values',details:err.issues.map(i=>({field:i.path.join('.'),message:i.message}))});if(err.code===11000)return res.status(409).json({error:'Duplicate record'});console.error(err.name);res.status(err.status||500).json({error:err.status?err.message:'Something went wrong'});});
 server.listen(Number(process.env.PORT||4173),process.env.HOST||'127.0.0.1',()=>console.log('LifeLink local server ready on '+(process.env.PORT||4173)));
 for(const signal of ['SIGTERM','SIGINT'])process.on(signal,async()=>{io.close();server.close();await mongoose.disconnect();await memory?.stop();process.exit(0);});

@@ -88,3 +88,17 @@ Tests use isolated temporary MongoDB, never an environment `MONGODB_URI`. API te
 ## Limits before real use
 
 This remains a local portfolio/pilot app, not an emergency service. Demo people and hospitals are fictional. There is no verified real hospital feed, donor screening, cross-matching, SMS/email, account email verification, password-reset flow, account deletion/export, backup policy or full operational review. Institution approval is an admin decision, not automatic legal/medical verification. Review privacy, consent, abuse controls, medical process and access rights before putting real donor/health data in it. Source control history records individual feature and fix steps.
+
+### Split deployment
+
+The backend is deployed separately on Render using `npm ci --omit=dev` and
+`node server/index.js`. Set `API_ONLY=1`, `HOST=0.0.0.0`, `NODE_ENV=production`,
+`TRUST_PROXY=1`, the persistent `MONGODB_URI`, and the exact `CLIENT_ORIGIN`.
+The frontend runs on GitHub Pages with its backend origin in `VITE_API_URL`.
+Production sessions use Secure, HttpOnly, SameSite=None partitioned cookies.
+This lets supporting browsers keep sessions scoped to the frontend site.
+Browsers that block cross-site cookies and lack partitioned-cookie support
+may not retain sign-in. No session token is put in localStorage.
+The free backend sleeps when idle; no keep-alive traffic is configured.
+Persistent deployments do not seed fictional accounts or hospitals. An
+administrator must be created explicitly with `npm run bootstrap:admin`.
