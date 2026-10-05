@@ -4,7 +4,7 @@ import http from 'node:http';
 import path from 'node:path';
 import mongoose from 'mongoose';
 import cookieParser from 'cookie-parser';
-import {MongoMemoryServer} from 'mongodb-memory-server';
+import {MongoMemoryReplSet} from 'mongodb-memory-server';
 import {Server} from 'socket.io';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -14,7 +14,7 @@ import {hospitals,donors,inventory,seededRequests} from './seed.js';
 import {User,Session,Hospital,Donor,Request,Inventory,Audit,Appointment,Alert} from './models.js';
 import {hashPassword,verifyPassword,sessionUser,publicUser,setSession,hashToken,id,requireRole} from './auth.js';
 if(process.env.NODE_ENV==='production'&&!process.env.MONGODB_URI)throw Error('MONGODB_URI required');
-const memory=!process.env.MONGODB_URI?await MongoMemoryServer.create({binary:{version:'7.0.14'}}):null;
+const memory=!process.env.MONGODB_URI?await MongoMemoryReplSet.create({binary:{version:'7.0.14'},replSet:{count:1}}):null;
 await mongoose.connect(process.env.MONGODB_URI||memory.getUri('blood_donor_network_v2'));
 await Promise.all([User,Session,Hospital,Donor,Request,Inventory,Appointment,Alert].map(m=>m.init()));
 // Fictional demo accounts are seeded only in explicitly local temporary mode.
@@ -70,3 +70,54 @@ app.patch('/api/donors/:id',requireRole('donor'),route(async(req,res)=>{if(req.p
 io.use(async(socket,next)=>{try{const cookie=socket.handshake.headers.cookie||'';const token=cookie.split(';').map(x=>x.trim()).find(x=>x.startsWith('lifelink_session='))?.slice(17);const user=await sessionUser(token);if(!user)return next(Error('Sign in required'));socket.data.user=user;socket.data.token=token;next();}catch{next(Error('Sign in required'));}});
 io.on('connection',socket=>{const u=socket.data.user;if(u.donorId)socket.join('donor:'+u.donorId);socket.join('user:'+u.id);socket.on('donor:join',(_,ack)=>ack?.({ok:true}));});
 // Feature routes follow below.
+const requestInput=z.object({hospitalId:z.string().max(40),bloodGroup:z.enum(BLOOD_GROUPS),units:z.number().int().min(1).max(10),urgency:z.enum(['Urgent','Standard']),purpose:z.enum(['Hospital requirement','Patient requirement']),radiusKm:z.number().min(1).max(50)}).strict();
+app.post('/api/requests',requireRole('hospital'),route(hospitalGuard),route(async(req,res)=>{
+ const input=requestInput.parse(req.body);if(input.hospitalId!==req.user.hospitalId)return res.status(403).json({error:'Not your institution'});
+ const request=await Request.create({...input,id:id('REQ'),status:'Open',location:req.hospital.location,acceptedDonors:[],collectedUnits:0});
+ const matches=matchDonors(clean(await Donor.find().lean()),request.toObject());
+ await audit(req,'request.created',request.id);await broadcast();
+ res.status(201).json({request,matches:matches.map(d=>({id:d.id,name:d.name,bloodGroup:d.bloodGroup,area:d.area,distanceKm:d.distanceKm}))});
+ await notifyMatches(request,matches);
+}));
+app.get('/api/requests/:id/matches',requireRole('hospital'),route(hospitalGuard),route(async(req,res)=>{const r=await Request.findOne({id:req.params.id,hospitalId:req.user.hospitalId});if(!r)return res.status(404).json({error:'Request not found'});const matches=matchDonors(clean(await Donor.find().lean()),r);res.json(matches.map(d=>({id:d.id,name:d.name,bloodGroup:d.bloodGroup,area:d.area,distanceKm:d.distanceKm})));}));
+app.post('/api/requests/:id/accept',requireRole('donor'),route(async(req,res)=>{
+ z.object({donorId:z.string().optional()}).strict().parse(req.body);if(req.body.donorId&&req.body.donorId!==req.user.donorId)return res.status(403).json({error:'Not your donor profile'});
+ const r=await Request.findOne({id:req.params.id}).lean(),d=await Donor.findOne({id:req.user.donorId}).lean();
+ if(!r||!d||!matchDonors([d],r).length)return res.status(409).json({error:'No available exact-group match'});
+ let updated;
+ await mongoose.connection.transaction(async session=>{
+  updated=await Request.findOneAndUpdate({id:r.id,status:{$in:['Open','Scheduled']},acceptedDonors:{$ne:d.id},$expr:{$lt:[{$size:'$acceptedDonors'},'$units']}},[{$set:{acceptedDonors:{$concatArrays:['$acceptedDonors',[d.id]]},status:'Scheduled'}}],{new:true,session});
+  if(!updated){const e=Error('Closed, already accepted or capacity reached');e.status=409;throw e;}
+  await Appointment.create([{id:id('APT'),requestId:r.id,donorId:d.id,hospitalId:r.hospitalId,status:'Accepted',units:0}],{session});
+  await Alert.updateMany({donorId:d.id,requestId:r.id},{respondedAt:new Date()},{session});
+ });
+ await audit(req,'donor.accepted',r.id,{donorId:d.id});await broadcast();res.json(updated);
+}));
+app.patch('/api/appointments/:id',requireRole('hospital'),route(hospitalGuard),route(async(req,res)=>{
+ const b=z.object({status:z.enum(['Appointment','Attended','Collected','Cancelled']),scheduledAt:z.string().datetime({offset:true}).optional(),units:z.number().int().min(1).max(2).optional(),addToInventory:z.boolean().optional()}).strict().parse(req.body);
+ let updated;
+ await mongoose.connection.transaction(async session=>{
+  const a=await Appointment.findOne({id:req.params.id,hospitalId:req.user.hospitalId}).session(session);if(!a){const e=Error('Appointment not found');e.status=404;throw e;}
+  const r=await Request.findOne({id:a.requestId}).session(session);
+  if(!r||['Cancelled','Fulfilled'].includes(r.status)){const e=Error('Request closed');e.status=409;throw e;}
+  const transitions={Accepted:['Appointment','Cancelled'],Appointment:['Attended','Cancelled'],Attended:['Collected','Cancelled']};
+  if(!transitions[a.status]?.includes(b.status)){const e=Error('Invalid workflow transition');e.status=409;throw e;}
+  if(b.status==='Appointment'){if(!b.scheduledAt||Date.parse(b.scheduledAt)<=Date.now()){const e=Error('Choose a future appointment');e.status=400;throw e;}a.scheduledAt=new Date(b.scheduledAt);}
+  if(b.status==='Attended')a.attendedAt=new Date();
+  if(b.status==='Collected'){
+   if(!b.units||r.collectedUnits+b.units>r.units){const e=Error('Collected units exceed requested units');e.status=409;throw e;}
+   a.units=b.units;a.collectedAt=new Date();r.collectedUnits+=b.units;
+   if(r.collectedUnits>=r.units)r.status='Fulfilled';
+   // Posting inventory is an explicit separate coordinator choice, not an effect of acceptance.
+   if(b.addToInventory)await Inventory.updateOne({hospitalId:a.hospitalId,bloodGroup:r.bloodGroup},{$inc:{units:b.units},$set:{updatedBy:req.user.id}},{session});
+  }
+  if(b.status==='Cancelled'){r.acceptedDonors=r.acceptedDonors.filter(d=>d!==a.donorId);if(!r.acceptedDonors.length)r.status='Open';}
+  a.status=b.status;await a.save({session});await r.save({session});updated=a;
+  await Audit.create([{actorId:req.user.id,action:'appointment.'+b.status.toLowerCase(),targetId:a.id,details:{units:b.units||0,inventoryPosted:!!b.addToInventory}}],{session});
+ });await broadcast();res.json(updated);
+}));
+app.patch('/api/requests/:id/status',requireRole('hospital'),route(hospitalGuard),route(async(req,res)=>{
+ const{status}=z.object({status:z.literal('Cancelled')}).strict().parse(req.body);let updated;
+ await mongoose.connection.transaction(async session=>{updated=await Request.findOneAndUpdate({id:req.params.id,hospitalId:req.user.hospitalId,status:{$in:['Open','Scheduled']}},{status},{new:true,session});if(!updated){const e=Error('Request not found or closed');e.status=409;throw e;}await Appointment.updateMany({requestId:updated.id,status:{$ne:'Collected'}},{status:'Cancelled'},{session});});
+ await audit(req,'request.cancelled',updated.id);await broadcast();res.json(updated);
+}));
