@@ -70,7 +70,7 @@ function App() {
     [group, setGroup] = useState("All groups"),
     [donorId, setDonorId] = useState("d1"),
     [alerts, setAlerts] = useState([]),
-    [focusRequest, setFocusRequest] = useState(null),
+    [focusRequest, setFocusRequest] = useState(null),[serverMatches,setServerMatches]=useState([]),
     [lastUpdated, setLastUpdated] = useState(new Date());
   useEffect(()=>{api("/auth/me").then(r=>{setUser(r.user);setIsDemo(r.demo);}).catch(e=>setError(e.message));},[]);
   useEffect(() => {
@@ -112,6 +112,7 @@ function App() {
     setAlerts([]);
     return () => socket.off("connect", join);
   }, [donorId]);
+  useEffect(()=>{if(!focusRequest||user?.role!=="hospital")return;setServerMatches([]);api("/requests/"+focusRequest.id+"/matches").then(setServerMatches).catch(e=>setError(e.message));},[focusRequest,user]);
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(""), 6000);
@@ -381,13 +382,7 @@ function App() {
       </>
     );
   }
-  const nearby = available
-    .map((d) => ({
-      ...d,
-      distance: distance(d.location, data.hospitals[0].location),
-    }))
-    .sort((a, b) => a.distance - b.distance)
-    .slice(0, 4);
+  const nearby = available.slice(0,4);
   return (
     <div className="app">
       <aside className="sidebar">
@@ -582,126 +577,13 @@ function App() {
                       <MapPin size={13} /> Chennai
                     </span>
                   </div>
-                  <div className="network-map">
-                    <svg
-                      viewBox="0 0 600 235"
-                      role="img"
-                      aria-label="Illustrative local donor network, not a navigation map"
-                    >
-                      <defs>
-                        <pattern
-                          id="grid"
-                          width="38"
-                          height="38"
-                          patternUnits="userSpaceOnUse"
-                        >
-                          <path
-                            d="M 38 0 L 0 0 0 38"
-                            fill="none"
-                            stroke="#e7ece8"
-                            strokeWidth="1"
-                          />
-                        </pattern>
-                      </defs>
-                      <rect width="600" height="235" fill="url(#grid)" />
-                      <path
-                        d="M520 0 Q460 110 535 235 L600 235 L600 0"
-                        fill="#d9eced"
-                      />
-                      <path
-                        d="M0 155 Q170 120 290 162 T520 90 M180 0 Q240 120 205 235 M0 70 L490 190"
-                        fill="none"
-                        stroke="#fff"
-                        strokeWidth="11"
-                      />
-                      <circle
-                        cx="290"
-                        cy="112"
-                        r="82"
-                        fill="#bb353a"
-                        opacity=".035"
-                        stroke="#bb353a"
-                        strokeDasharray="5 6"
-                      />
-                      <circle
-                        cx="290"
-                        cy="112"
-                        r="48"
-                        fill="#bb353a"
-                        opacity=".05"
-                      />
-                      {available.slice(0, 11).map((d, i) => {
-                        const x = Math.max(
-                            28,
-                            Math.min(
-                              460,
-                              290 + ((d.location?.lng||0) - 80.2579) * 2400,
-                            ),
-                          ),
-                          y = Math.max(
-                            20,
-                            Math.min(
-                              215,
-                              112 - ((d.location?.lat||0) - 13.0067) * 2500,
-                            ),
-                          );
-                        return (
-                          <g key={d.id}>
-                            <circle cx={x} cy={y} r="8" fill="#fff" />
-                            <circle cx={x} cy={y} r="5" fill="#609c85" />
-                          </g>
-                        );
-                      })}
-                      <rect
-                        x="277"
-                        y="99"
-                        width="26"
-                        height="26"
-                        rx="8"
-                        fill="#bb353a"
-                      />
-                      <path
-                        d="M290 105 V119 M283 112 H297"
-                        stroke="white"
-                        strokeWidth="3"
-                      />
-                      <text x="317" y="104" fontSize="12" fill="#404942">
-                        Marina General
-                      </text>
-                      <text x="38" y="37" fontSize="11" fill="#85918b">
-                        GUINDY
-                      </text>
-                      <text x="365" y="199" fontSize="11" fill="#85918b">
-                        BESANT NAGAR
-                      </text>
-                      <text
-                        x="500"
-                        y="160"
-                        fontSize="11"
-                        fill="#819c9e"
-                        transform="rotate(-85 500 160)"
-                      >
-                        BAY OF BENGAL
-                      </text>
-                    </svg>
-                    <div className="map-legend">
-                      <span>
-                        <i />
-                        Available donor
-                      </span>
-                      <span>
-                        <i className="hospital-dot" />
-                        Hospital
-                      </span>
-                      <small>Illustrative location plot</small>
-                    </div>
-                  </div>
+                  <div className="network-map privacy-map"><ShieldCheck size={42}/><h3>Donor locations stay private</h3><p>LifeLink calculates request matches on the server. Exact donor coordinates are not sent to the coordinator dashboard.</p><b>{available.length} available donors</b></div>
                 </section>
                 <section className="panel nearest-panel">
                   <div className="section-heading">
                     <div>
-                      <h2>Closest available donors</h2>
-                      <p>Sorted by straight-line distance</p>
+                      <h2>Available community donors</h2>
+                      <p>Exact locations are private. Request matches are ranked on the server.</p>
                     </div>
                     <Users size={20} />
                   </div>
@@ -716,7 +598,7 @@ function App() {
                       <div>
                         <b>{d.name}</b>
                         <small>
-                          {d.area} · {d.distance.toFixed(1)} km away
+                          {d.area}
                         </small>
                       </div>
                       <span className="blood-tag">{d.bloodGroup}</span>
@@ -1119,11 +1001,7 @@ function App() {
       {focusRequest &&
         (() => {
           const r = data.requests.find((x) => x.id === focusRequest.id);
-          const matches = available
-            .filter((d) => d.bloodGroup === r.bloodGroup)
-            .map((d) => ({ ...d, distance: distance(d.location||{lat:0,lng:0}, r.location) }))
-            .filter((d) => d.distance <= r.radiusKm)
-            .sort((a, b) => a.distance - b.distance);
+          const matches = serverMatches.map(d=>({...d,distance:d.distanceKm}));
           return (
             <div className="modal-backdrop">
               <section
