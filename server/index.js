@@ -77,9 +77,8 @@ app.post('/api/requests',requireRole('hospital'),route(hospitalGuard),route(asyn
  const input=requestInput.parse(req.body);if(input.hospitalId!==req.user.hospitalId)return res.status(403).json({error:'Not your institution'});
  const request=await Request.create({...input,id:id('REQ'),status:'Open',location:req.hospital.location,acceptedDonors:[],collectedUnits:0});
  const matches=matchDonors(clean(await Donor.find().lean()),request.toObject());
- await audit(req,'request.created',request.id);await broadcast();
+ await audit(req,'request.created',request.id);await broadcast();await notifyMatches(request,matches);
  res.status(201).json({request,matches:matches.map(d=>({id:d.id,name:d.name,bloodGroup:d.bloodGroup,area:d.area,distanceKm:d.distanceKm}))});
- await notifyMatches(request,matches);
 }));
 app.get('/api/requests/:id/matches',requireRole('hospital'),route(hospitalGuard),route(async(req,res)=>{const r=await Request.findOne({id:req.params.id,hospitalId:req.user.hospitalId});if(!r)return res.status(404).json({error:'Request not found'});const matches=matchDonors(clean(await Donor.find().lean()),r);res.json(matches.map(d=>({id:d.id,name:d.name,bloodGroup:d.bloodGroup,area:d.area,distanceKm:d.distanceKm})));}));
 app.post('/api/requests/:id/accept',requireRole('donor'),route(async(req,res)=>{
@@ -90,7 +89,7 @@ app.post('/api/requests/:id/accept',requireRole('donor'),route(async(req,res)=>{
  await mongoose.connection.transaction(async session=>{
   updated=await Request.findOneAndUpdate({id:r.id,status:{$in:['Open','Scheduled']},acceptedDonors:{$ne:d.id},$expr:{$lt:[{$size:'$acceptedDonors'},'$units']}},[{$set:{acceptedDonors:{$concatArrays:['$acceptedDonors',[d.id]]},status:'Scheduled'}}],{new:true,session});
   if(!updated){const e=Error('Closed, already accepted or capacity reached');e.status=409;throw e;}
-  await Appointment.create([{id:id('APT'),requestId:r.id,donorId:d.id,hospitalId:r.hospitalId,status:'Accepted',units:0}],{session});
+  await Appointment.findOneAndUpdate({requestId:r.id,donorId:d.id},{$set:{hospitalId:r.hospitalId,status:'Accepted',units:0},$unset:{scheduledAt:1,attendedAt:1,collectedAt:1},$setOnInsert:{id:id('APT')}},{upsert:true,session});
   await Alert.updateMany({donorId:d.id,requestId:r.id},{respondedAt:new Date()},{session});
  });
  await audit(req,'donor.accepted',r.id,{donorId:d.id});await broadcast();res.json(updated);

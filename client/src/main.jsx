@@ -255,7 +255,7 @@ function App() {
                   <strong>
                     {r.acceptedDonors.length}/{r.units}
                   </strong>
-                  <small>donors confirmed</small>
+                  <small>places reserved</small>
                 </td>
                 <td>
                   <button
@@ -463,7 +463,7 @@ function App() {
             <button
               className="icon-button notification-button"
               aria-label="View donor alerts"
-              onClick={() => setPage("Donor portal")}
+              disabled={user.role!=="donor"} onClick={() => setPage("Donor portal")}
             >
               <Bell size={19} />
               {alerts.length > 0 && <span>{alerts.length}</span>}
@@ -495,7 +495,7 @@ function App() {
                     : "Manage your community blood network in real time."}
               </p>
             </div>
-            <button className="primary" disabled={user.role!=="hospital"} onClick={() => setModal(true)}>
+            <button className="primary" hidden={user.role!=="hospital"} onClick={() => setModal(true)}>
               <Plus size={18} />
               Create blood request
             </button>
@@ -554,7 +554,7 @@ function App() {
                 <div className="section-heading">
                   <div>
                     <h2>Blood group inventory</h2>
-                    <p>Community stock overview. Low groups need attention.</p>
+                    <p>Your institution's entered stock. Check update times for freshness.</p>
                   </div>
                   <button
                     className="text-button"
@@ -637,7 +637,7 @@ function App() {
             <section className="panel">
               <div className="section-heading">
                 <div>
-                  <h2>Community inventory</h2>
+                  <h2>Institution inventory</h2>
                   <p>
                     Edit a unit count, then leave the field to save. Updates
                     appear in every connected dashboard.
@@ -677,7 +677,7 @@ function App() {
                     .join("")}
                 </div>
                 <div>
-                  <span className="eyebrow">DEMO DONOR</span>
+                  <span className="eyebrow">YOUR DONOR PROFILE</span>
                   <h2>
                     {donor.name}{" "}
                     <span className="blood-tag">{donor.bloodGroup}</span>
@@ -708,7 +708,7 @@ function App() {
                   <h2>Nearby requests for you</h2>
                   <p>
                     Exact blood group · within the hospital's search radius ·
-                    nearest donors notified first
+                    matching donors alerted
                   </p>
                 </div>
                 <span className="live">
@@ -787,7 +787,7 @@ function App() {
                           <b>
                             {r.acceptedDonors.length}/{r.units}
                           </b>
-                          <small>donors confirmed</small>
+                          <small>places reserved</small>
                         </div>
                       </div>
                       <p className="medical-note">
@@ -840,9 +840,9 @@ function App() {
                   </p>
                   <button
                     className="text-button"
-                    disabled={user.role!=="hospital"} onClick={() => setModal(true)}
+                    hidden={user.role!=="hospital"} onClick={() => setModal(true)}
                   >
-                    Create a demo request
+                    Hospital coordinators create requests
                     <Plus size={16} />
                   </button>
                 </div>
@@ -1022,7 +1022,7 @@ function App() {
                   {r.bloodGroup} · {hospital(r.hospitalId).name}
                 </h2>
                 <p>
-                  {r.units} units requested · {r.radiusKm} km search radius
+                  {r.units} units requested · {r.collectedUnits||0} confirmed collected · {r.radiusKm} km search radius
                 </p>
                 {badge(r.status)}
                 <h3 className="detail-subtitle">
