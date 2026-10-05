@@ -1,0 +1,4 @@
+// No authenticated API data is cached. Push bodies contain no donor/patient details.
+self.addEventListener('push',event=>{let data={title:'LifeLink',body:'Open LifeLink to review updates.'};try{data={...data,...event.data.json()};}catch{}event.waitUntil(self.registration.showNotification(data.title,{body:data.body,icon:new URL('icon.svg',self.registration.scope).href,tag:data.requestId||'lifelink',data:{url:self.registration.scope}}));});
+self.addEventListener('notificationclick',event=>{event.notification.close();event.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(list=>{const match=list.find(c=>c.url.startsWith(self.registration.scope));return match?match.focus():clients.openWindow(self.registration.scope);}));});
+self.addEventListener('install',()=>self.skipWaiting());self.addEventListener('activate',event=>event.waitUntil(clients.claim()));

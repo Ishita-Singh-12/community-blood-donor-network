@@ -11,8 +11,9 @@ import rateLimit from 'express-rate-limit';
 import {z} from 'zod';
 import {BLOOD_GROUPS,matchDonors} from './matching.js';
 import {hospitals,donors,inventory,seededRequests} from './seed.js';
-import {User,Session,Hospital,Donor,Request,Inventory,Audit,Appointment,Alert} from './models.js';
+import {User,Session,Hospital,Donor,Request,Inventory,Audit,Appointment,Alert,Subscription} from './models.js';
 import {hashPassword,verifyPassword,sessionUser,publicUser,setSession,hashToken,id,requireRole} from './auth.js';
+import {sendPush,pushEnabled} from './push.js';
 if(process.env.NODE_ENV==='production'&&!process.env.MONGODB_URI)throw Error('MONGODB_URI required');
 const memory=!process.env.MONGODB_URI?await MongoMemoryReplSet.create({binary:{version:'7.0.14'},replSet:{count:1}}):null;
 await mongoose.connect(process.env.MONGODB_URI||memory.getUri('blood_donor_network_v2'));
@@ -130,3 +131,17 @@ app.get('/api/alerts',requireRole('donor'),route(async(req,res)=>{const list=awa
 app.patch('/api/alerts/:id/seen',requireRole('donor'),route(async(req,res)=>{const a=await Alert.findOneAndUpdate({id:req.params.id,donorId:req.user.donorId},{$set:{seenAt:new Date()}},{new:true});if(!a)return res.status(404).json({error:'Alert not found'});res.json(a);}));
 app.patch('/api/inventory/:group',requireRole('hospital'),route(hospitalGuard),route(async(req,res)=>{const group=z.enum(BLOOD_GROUPS).parse(req.params.group);const{units}=z.object({units:z.number().int().min(0).max(200)}).strict().parse(req.body);const before=await Inventory.findOne({hospitalId:req.user.hospitalId,bloodGroup:group});const item=await Inventory.findOneAndUpdate({hospitalId:req.user.hospitalId,bloodGroup:group},{units,updatedBy:req.user.id},{new:true});await audit(req,'inventory.adjusted',req.user.hospitalId,{bloodGroup:group,before:before.units,after:units});await broadcast();res.json(item);}));
 app.get('/api/audit',requireRole('admin'),route(async(_,res)=>res.json({events:await Audit.find().sort({createdAt:-1}).limit(100).lean()})));
+app.get('/api/push/config',requireRole('donor'),(_,res)=>res.json({enabled:pushEnabled,publicKey:pushEnabled?process.env.VAPID_PUBLIC_KEY:null}));
+app.post('/api/push/subscriptions',requireRole('donor'),route(async(req,res)=>{
+ const b=z.object({endpoint:z.string().url().max(2048),keys:z.object({p256dh:z.string().min(20).max(200),auth:z.string().min(10).max(100)}).strict()}).strict().parse(req.body);
+ // Restrict endpoints to known web push services to prevent server-side request forgery.
+ const host=new URL(b.endpoint).hostname;
+ if(new URL(b.endpoint).protocol!=='https:'||!['fcm.googleapis.com','updates.push.services.mozilla.com','web.push.apple.com'].includes(host))return res.status(400).json({error:'Unsupported push endpoint'});
+ const existing=await Subscription.findOne({endpoint:b.endpoint});if(existing&&existing.userId!==req.user.id)return res.status(409).json({error:'Subscription already registered'});
+ await Subscription.findOneAndUpdate({endpoint:b.endpoint},{...b,userId:req.user.id},{upsert:true});res.json({ok:true});
+}));
+app.delete('/api/push/subscriptions',requireRole('donor'),route(async(req,res)=>{await Subscription.deleteMany({userId:req.user.id});res.json({ok:true});}));
+app.use(express.static(path.resolve('dist')));app.get('*',(req,res)=>req.path.startsWith('/api')?res.status(404).json({error:'Endpoint not found'}):res.sendFile(path.resolve('dist/index.html')));
+app.use((err,req,res,next)=>{if(err instanceof z.ZodError)return res.status(400).json({error:'Please check submitted values',details:err.issues.map(i=>({field:i.path.join('.'),message:i.message}))});if(err.code===11000)return res.status(409).json({error:'Duplicate record'});console.error(err.name);res.status(err.status||500).json({error:err.status?err.message:'Something went wrong'});});
+server.listen(Number(process.env.PORT||4173),process.env.HOST||'127.0.0.1',()=>console.log('LifeLink local server ready on '+(process.env.PORT||4173)));
+for(const signal of ['SIGTERM','SIGINT'])process.on(signal,async()=>{io.close();server.close();await mongoose.disconnect();await memory?.stop();process.exit(0);});
