@@ -1,107 +1,90 @@
 # LifeLink - Community Blood Donor Network
 
-A full-stack project for coordinating blood requests between hospitals, patients and nearby donors. The hospital dashboard shows donor availability, blood group inventory and request status. A separate donor portal receives live request alerts and lets donors respond.
+A MERN coordination app with authenticated donor/hospital accounts, private realtime alerts, appointment and collection outcomes, institution-specific stock, and a Gemini-assisted request form. Clinical decisions remain with the institution.
 
-Built with **React, Node.js, Express, Socket.IO and MongoDB**.
+## Local setup
 
-## Run locally
+Node 22+ and internet access for first install/MongoDB binary download:
 
-Install Node.js 22 or newer, then run:
-
-```bash
-npm ci && npm run demo
+```sh
+npm ci
+npm run demo
 ```
 
-Open **http://127.0.0.1:4173**. No MongoDB account, API keys or paid service is needed for the demo. The first run downloads a MongoDB binary through `mongodb-memory-server`, so allow a little extra time and an internet connection. Linux needs MongoDB's usual runtime libraries, including OpenSSL 3; macOS and Windows are supported by the dependency but have not been tested for this project.
+Open http://127.0.0.1:4173. Temporary local mode runs a real MongoDB **replica set**, needed for transactional acceptance and collection. Data resets on shutdown. Fictional records and demo accounts are seeded only when no external database is supplied:
 
-The demo runs a real temporary MongoDB process. Records persist during that server session and reset when the server stops. Sixteen fictional donors, two fictional hospitals, eight blood groups and three sample requests are seeded automatically. Fonts are bundled locally.
+| Account | Email |
+|---|---|
+| Hospital 1 | h1@lifelink.test |
+| Hospital 2 | h2@lifelink.test |
+| Donor 1 (O+) | d1@lifelink.test |
+| Administrator | admin@lifelink.test |
 
-### Use a persistent database
+Local-only demo password: `LifeLink-demo-2026!`. These credentials are intentionally public demo fixtures, never created in persistent mode.
 
-```bash
-MONGODB_URI=mongodb://127.0.0.1:27017/blood_donor_network npm run demo
+## Implemented workflows
+
+- **Accounts:** scrypt-hashed passwords, opaque HttpOnly cookie sessions stored as hashes, expiry and logout; consent-based donor/hospital registration. New donors start unavailable. Institutions need administrator approval to create requests.
+- **Roles:** donors modify only their own availability/respond as themselves; coordinators access only their institution's requests, appointments and editable inventory. Admins approve/revoke institutions. Authenticated socket rooms cannot be joined by selecting another donor ID. Exact donor coordinates and emails are not sent to coordinators.
+- **Matching:** exact blood group, availability and straight-line radius, ordered nearest-first. This is not a medical compatibility engine or travel-time routing.
+- **Requests:** donor acceptance reserves capacity and creates an appointment record, not a blood unit. Atomic transaction protects concurrent acceptance.
+- **Outcomes:** Accepted → Appointment → Attended → Collected, with explicit coordinator confirmations and validated transitions. Partial collections accumulate toward requested units; fulfillment occurs only after confirmed units meet the need. Cancellation releases reservations. Posting confirmed units to stock is a separate unchecked-by-default coordinator choice.
+- **Inbox:** matching alerts are stored with seen/responded timestamps and stay available after reconnect/reload. Socket messages deliver immediate updates; persisted data owns the state.
+- **Inventory:** blood-group counts belong to a hospital, include update timestamps, and keep an audit of adjustments. No external stock feed or automatic medical verification is claimed.
+- **Push/PWA:** manifest, app icon and service worker; optional opt-in Web Push using VAPID. Notification text contains no patient/donor details. Unsupported or unconfigured push falls back to the inbox. Push is best-effort, not emergency delivery infrastructure.
+- **Gemini assistant:** coordinator enters a short request description, Gemini returns a schema-validated draft with missing details left blank, coordinator chooses Apply and reviews all form fields before posting. It cannot submit a request by itself. No medical recommendations. Manual creation works without Gemini.
+
+## Try the end-to-end flow
+
+1. Sign in as hospital h1 in one browser and donor d1 in another.
+2. Create an O+ request for one unit, review and confirm the fields.
+3. Donor receives a live alert and a saved inbox item; choose I can help.
+4. Hospital opens Appointments, schedules a future visit, confirms attendance, then confirms collected units.
+5. The request becomes Fulfilled; inventory changes only if the coordinator explicitly chose to post collected units.
+6. Reload donor portal: the saved alert and response history remain. Sign in as admin to review institution registrations.
+
+## Gemini configuration
+
+Set these securely in your shell/environment, never in frontend variables or Git:
+
+```sh
+export GEMINI_API_KEY='your-own-key'
+export GEMINI_MODEL='gemini-3.8-flash'
+npm run demo
 ```
 
-Set environment variables in your shell or deployment tool. `.env.example` documents the supported values; copying it to `.env` alone does not load it. An empty database is seeded once, not on every restart. Use a dedicated database for this demo.
+The default model name follows current [Google structured-output documentation](https://ai.google.dev/gemini-api/docs/generate-content/structured-output); availability for your project must be verified. `GEMINI_MODEL` is configurable. Missing key, timeout, provider error or invalid output produces a manual-form fallback. Tests mock transport, not medical data. No real provider call was made during no-key validation. Check quota/billing before enabling real traffic.
 
-## Try the live flow
+The assistant warns against entering patient names, contact details or clinical records; the entered text goes to Gemini only when the user clicks Create draft. The server does not persist raw prompts or model responses. This warning is not a complete DLP system. Deploy only with a reviewed data policy.
 
-1. Open the dashboard in one browser tab and the **Donor portal** in another. Leave the donor as **Ananya Rao (O+)**.
-2. In the dashboard, click **Create blood request**. Use Marina General Hospital, O+, two units, Urgent and a 15 km radius.
-3. Submit the request. The donor tab receives a Socket.IO alert with the hospital, distance and proximity rank, without refreshing.
-4. Click **I can help** in the donor tab. The hospital sees the response count and status change to Scheduled immediately.
-5. Open request details to review matching donors, nearest first. Mark it Fulfilled after collection or cancel it.
-6. Toggle donor availability in the directory or portal. Edit inventory counts in **Blood inventory** and leave the field to save. Connected dashboards update automatically.
+## VAPID and push
 
-## Features
+Generate app-specific VAPID keys locally with `npx web-push generate-vapid-keys --json`, then set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` securely. Do not commit the private key. Browser push requires HTTPS or localhost, browser support and explicit permission. iOS may require installing the PWA. Known push service hosts are allowlisted to reduce SSRF risk. Delivery is not guaranteed; no real device push was tested without keys/device subscription.
 
-- Responsive hospital dashboard with availability totals, community-wide inventory, low-stock indicators and a request table.
-- Searchable donor directory with blood group filters and availability controls.
-- Requests for hospital or patient needs, with units, priority and search radius.
-- In-app alerts sent only to available, exact-blood-group donors inside the search radius.
-- Haversine distance matching, ordered nearest first with distance and rank shown in the donor portal and request details.
-- Donor acceptance with duplicate-response, closed-request and capacity checks. MongoDB updates prevent concurrent responses from overbooking a request.
-- Open, Scheduled, Fulfilled and Cancelled statuses.
-- MongoDB-backed inventory and donor state, live Socket.IO synchronization and reconnect state refresh.
-- Validated inputs, API rate limiting, request body limits, keyboard-accessible dialogs and locally bundled fonts.
+## Persistent development / future hosting
 
-## How matching works
+Use a **dedicated new database** via `MONGODB_URI`, with replica-set/transaction support (for example Atlas). Never point this revision at StoryWeaver. Persistent mode does not seed demo users or records; bootstrap an admin explicitly:
 
-The server filters donors by current availability and **exact blood group**, calculates straight-line distance between donor and hospital coordinates, removes donors outside the requested radius, then sorts by distance. Alerts are emitted to each matching donor's Socket.IO room in that order. All matches are notified immediately; there is no timed escalation queue. Distance is not travel time.
+```sh
+# Set MONGODB_URI, ADMIN_EMAIL and ADMIN_PASSWORD securely first.
+npm run bootstrap:admin
+```
 
-This is coordination logic, not a medical compatibility engine. The hospital must confirm clinical eligibility, cross-matching, consent and collection. Donor acceptance does **not** create a blood unit or change inventory automatically.
+The bootstrap refuses to overwrite existing accounts. Institution registration then creates a pending institution and zeroed stock.
 
-## Tests
+This revision changes the data model and cannot silently reuse the old demo database. Back up any prior data and write a reviewed migration before connecting existing datasets. `.env.example` documents process variables; copying it alone does not load them.
 
-```bash
+No deployment is configured by these updates. GitHub Pages + separate Render APIs require a reviewed cross-site cookie strategy: browser third-party-cookie policies may block the Pages/Render combination. Prefer a same-origin application or properly configured domains for authenticated hosting. Production cookies use Secure/SameSite=None; local cookies use Lax. Set exact `CLIENT_ORIGIN` and HTTPS before hosting. Free Render services can sleep; no keep-alive pings are configured. No always-on or emergency claim.
+
+## Verification
+
+```sh
 npm test
 npm run test:ui
 ```
 
-The test runners start an isolated server with a fresh temporary MongoDB database on a free port, then shut it down. They never use `MONGODB_URI` from your environment.
+Tests use isolated temporary MongoDB, never an environment `MONGODB_URI`. API tests cover role isolation, approval, alert persistence/live events, valid collection transitions, inventory posting, duplicate/concurrent acceptance, cancellation and push endpoint validation. Gemini fixture tests cover structured output, missing details and safe failure. Browser tests sign in two real local accounts, create/accept a request, confirm collection, reload the inbox and check mobile layout. Artifacts are saved under `artifacts/`. Use `CHROME_PATH` for another Chrome install.
 
-- Unit tests cover distance calculation, nearest-first ordering, radius boundaries, availability filtering and non-mutation.
-- API and Socket.IO tests cover validation, targeted alerts, state broadcasts, donor acceptance, duplicate responses, concurrent capacity checks, closed requests and inventory updates.
-- Browser tests open separate hospital and donor pages, create a request, verify the live alert, accept it, check hospital status, search/filter donors, edit inventory and check mobile layouts. Screenshots are saved under `artifacts/`.
+## Limits before real use
 
-Browser tests use Google Chrome at `/usr/bin/google-chrome` by default. Override it when needed:
-
-```bash
-CHROME_PATH=/path/to/chrome npm run test:ui
-```
-
-The application was tested locally on Linux with Node.js 22 and Chrome. Tests demonstrate the implemented flow, not measured emergency response-time improvement.
-
-## Project structure
-
-```text
-client/
-  index.html
-  src/
-    main.jsx           React views and Socket.IO state
-    style.css          Responsive interface
-server/
-  index.js             Express API, MongoDB models and Socket.IO events
-  matching.js          Distance and donor matching
-  seed.js              Fictional demo records
- tests/
-  matching.test.js      Matching unit tests
-  api.test.js           API and realtime integration tests
-  ui.mjs                Browser flow and screenshot checks
-  run.mjs               Isolated test server lifecycle
-vite.config.js
-package.json
-.env.example
-```
-
-## Scope and safety
-
-**This is a working portfolio demo, not a live hospital system or emergency service.** All names, hospitals, stock and locations are fictional demo data. There are no real donor contacts, patient records, SMS messages or emails.
-
-The app deliberately uses demo identity switching instead of authentication. A local visitor can act as a hospital coordinator or choose any seeded donor. Do not expose this service publicly or put real health or location data into it. It binds to loopback by default.
-
-Before a real deployment, add authenticated accounts, role-based authorization, verified hospitals and donors, privacy/consent controls, audit trails, transport security, backups and a reviewed medical workflow. Socket.IO alerts only reach connected browser sessions. Offline users see eligible open requests when they reconnect, but there are no background push notifications or delivery guarantees. The location plot is illustrative, not a navigable map.
-
-## Deployment preparation
-
-See [deployment/README.md](deployment/README.md) for GitHub Pages + Render backend + persistent MongoDB setup. The manual Pages workflow requires a responding backend URL. Render static hosting is not used.
+This remains a local portfolio/pilot app, not an emergency service. Demo people and hospitals are fictional. There is no verified real hospital feed, donor screening, cross-matching, SMS/email, account email verification, password-reset flow, account deletion/export, backup policy or full operational review. Institution approval is an admin decision, not automatic legal/medical verification. Review privacy, consent, abuse controls, medical process and access rights before putting real donor/health data in it. Source control history records individual feature and fix steps.
