@@ -29,7 +29,7 @@ import "@fontsource/dm-sans/700.css";
 import "@fontsource/manrope/700.css";
 import "@fontsource/manrope/800.css";
 import "./style.css";
-import {Account,Workflow} from "./Account.jsx";
+import {Account,Workflow,Inbox,Approvals,RequestAssistant} from "./Account.jsx";
 const apiOrigin = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 const socket = io(apiOrigin || undefined,{autoConnect:false,withCredentials:true});
 async function api(path, method = "GET", body) {
@@ -361,7 +361,7 @@ function App() {
               </p>
               <button
                 className={`availability ${d.available ? "is-available" : ""}`}
-                disabled={busy}
+                disabled={busy||user.role!=="donor"}
                 onClick={() =>
                   action(`/donors/${d.id}`, "PATCH", {
                     available: !d.available,
@@ -500,7 +500,7 @@ function App() {
                     : "Manage your community blood network in real time."}
               </p>
             </div>
-            <button className="primary" onClick={() => setModal(true)}>
+            <button className="primary" disabled={user.role!=="hospital"} onClick={() => setModal(true)}>
               <Plus size={18} />
               Create blood request
             </button>
@@ -748,6 +748,8 @@ function App() {
               </section>
             </>
           )}
+          {page === "Donor portal" && user.role==="donor" && <Inbox api={api}/>}
+          {page === "Institution approvals" && <Approvals api={api} action={action}/>}
           {page === "Appointments" && <Workflow data={data} action={action} busy={busy}/>}
           {page === "Blood inventory" && (
             <section className="panel">
@@ -956,7 +958,7 @@ function App() {
                   </p>
                   <button
                     className="text-button"
-                    onClick={() => setModal(true)}
+                    disabled={user.role!=="hospital"} onClick={() => setModal(true)}
                   >
                     Create a demo request
                     <Plus size={16} />
@@ -1011,6 +1013,7 @@ function App() {
             </span>
             <h2 id="request-title">Create a blood request</h2>
             <p>Reach available, exact-group donors closest to your hospital.</p>
+            <RequestAssistant api={api} onDraft={draft=>{const form=document.querySelector("[role=dialog] form");for(const key of ["bloodGroup","units","urgency","radiusKm","purpose"])if(draft[key]!==null)form.elements.namedItem(key).value=draft[key];setToast("Draft applied. Review all fields, then confirm before posting.");}}/>
             <form
               onSubmit={async (e) => {
                 e.preventDefault();
@@ -1104,6 +1107,7 @@ function App() {
                   {error}
                 </p>
               )}
+              <label className="consent-row"><input type="checkbox" required/> I reviewed this request and confirm its group, units, institution and priority.</label>
               <button className="primary wide" disabled={busy}>
                 {busy ? "Sending..." : "Create & notify donors"}
                 <ArrowUpRight size={17} />
@@ -1191,3 +1195,5 @@ function App() {
   );
 }
 createRoot(document.getElementById("root")).render(<App />);
+
+if('serviceWorker' in navigator)navigator.serviceWorker.register(import.meta.env.BASE_URL+'sw.js').catch(()=>{});
