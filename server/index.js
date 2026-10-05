@@ -30,7 +30,7 @@ const app=express(),server=http.createServer(app),io=new Server(server,{cors:{or
 if(process.env.CLIENT_ORIGIN)app.use(cors({origin:process.env.CLIENT_ORIGIN,credentials:true}));
 if(process.env.TRUST_PROXY==='1')app.set('trust proxy',1);
 app.use(helmet({contentSecurityPolicy:false}));app.use(express.json({limit:'30kb'}));app.use(cookieParser());app.use('/api',rateLimit({windowMs:60000,limit:180}));
-const route=fn=>(req,res,next)=>Promise.resolve(fn(req,res)).catch(next);
+const route=fn=>(req,res,next)=>Promise.resolve(fn(req,res,next)).catch(next);
 app.use('/api',route(async(req,res,next)=>{const origin=req.headers.origin;if(!['GET','HEAD','OPTIONS'].includes(req.method)&&origin&&origin!==process.env.CLIENT_ORIGIN&&origin!==`${req.protocol}://${req.get('host')}`)return res.status(403).json({error:'Untrusted request origin'});req.user=await sessionUser(req.cookies.lifelink_session);next();}));
 const audit=(req,action,targetId,details={})=>Audit.create({actorId:req.user?.id,action,targetId,details});
 async function hospitalGuard(req,res,next){const h=await Hospital.findOne({id:req.user.hospitalId,approved:true});if(!h)return res.status(403).json({error:'Institution approval required'});req.hospital=h;next();}
