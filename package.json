@@ -12,7 +12,8 @@
     "test": "node tests/run.mjs",
     "test:ui": "npm run build && node tests/run.mjs --ui",
     "format": "prettier --write client/src server tests vite.config.js package.json README.md",
-    "format:check": "prettier --check client/src server tests vite.config.js package.json README.md"
+    "format:check": "prettier --check client/src server tests vite.config.js package.json README.md",
+    "bootstrap:admin": "node server/bootstrap-admin.js"
   },
   "dependencies": {
     "@fontsource/dm-sans": "^5.3.0",
