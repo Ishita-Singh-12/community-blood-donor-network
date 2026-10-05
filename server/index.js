@@ -121,3 +121,12 @@ app.patch('/api/requests/:id/status',requireRole('hospital'),route(hospitalGuard
  await mongoose.connection.transaction(async session=>{updated=await Request.findOneAndUpdate({id:req.params.id,hospitalId:req.user.hospitalId,status:{$in:['Open','Scheduled']}},{status},{new:true,session});if(!updated){const e=Error('Request not found or closed');e.status=409;throw e;}await Appointment.updateMany({requestId:updated.id,status:{$ne:'Collected'}},{status:'Cancelled'},{session});});
  await audit(req,'request.cancelled',updated.id);await broadcast();res.json(updated);
 }));
+async function notifyMatches(request,matches){for(const[index,d]of matches.entries()){
+ const alert=await Alert.findOneAndUpdate({donorId:d.id,requestId:request.id},{$setOnInsert:{id:id('ALT'),distanceKm:d.distanceKm,rank:index+1}},{upsert:true,new:true});
+ io.to('donor:'+d.id).emit('donor:alert',{alert:alert.toObject(),request:request.toObject(),hospital:await Hospital.findOne({id:request.hospitalId}).lean(),distanceKm:d.distanceKm,rank:index+1});
+ await sendPush(d.id,request.id);
+}}
+app.get('/api/alerts',requireRole('donor'),route(async(req,res)=>{const list=await Alert.find({donorId:req.user.donorId}).sort({createdAt:-1}).limit(100).lean();res.json({alerts:await Promise.all(list.map(async a=>({...a,request:await Request.findOne({id:a.requestId}).lean()})))});}));
+app.patch('/api/alerts/:id/seen',requireRole('donor'),route(async(req,res)=>{const a=await Alert.findOneAndUpdate({id:req.params.id,donorId:req.user.donorId},{$set:{seenAt:new Date()}},{new:true});if(!a)return res.status(404).json({error:'Alert not found'});res.json(a);}));
+app.patch('/api/inventory/:group',requireRole('hospital'),route(hospitalGuard),route(async(req,res)=>{const group=z.enum(BLOOD_GROUPS).parse(req.params.group);const{units}=z.object({units:z.number().int().min(0).max(200)}).strict().parse(req.body);const before=await Inventory.findOne({hospitalId:req.user.hospitalId,bloodGroup:group});const item=await Inventory.findOneAndUpdate({hospitalId:req.user.hospitalId,bloodGroup:group},{units,updatedBy:req.user.id},{new:true});await audit(req,'inventory.adjusted',req.user.hospitalId,{bloodGroup:group,before:before.units,after:units});await broadcast();res.json(item);}));
+app.get('/api/audit',requireRole('admin'),route(async(_,res)=>res.json({events:await Audit.find().sort({createdAt:-1}).limit(100).lean()})));
