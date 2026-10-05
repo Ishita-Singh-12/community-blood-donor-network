@@ -12,7 +12,7 @@ import {z} from 'zod';
 import {BLOOD_GROUPS,matchDonors} from './matching.js';
 import {hospitals,donors,inventory,seededRequests} from './seed.js';
 import {User,Session,Hospital,Donor,Request,Inventory,Audit,Appointment,Alert,Subscription} from './models.js';
-import {hashPassword,verifyPassword,sessionUser,publicUser,setSession,hashToken,id,requireRole} from './auth.js';
+import {hashPassword,verifyPassword,sessionUser,publicUser,setSession,hashToken,id,requireRole,sessionCookieOptions} from './auth.js';
 import {extractDraft} from './assistant.js';
 import {sendPush,pushEnabled} from './push.js';
 if(process.env.NODE_ENV==='production'&&!process.env.MONGODB_URI)throw Error('MONGODB_URI required');
@@ -54,7 +54,7 @@ app.get('/api/health',(_,res)=>res.json({ok:true,database:mongoose.connection.re
 app.get('/api/auth/me',(req,res)=>res.json({user:req.user?publicUser(req.user):null,demo:!!memory}));
 const loginLimit=rateLimit({windowMs:15*60000,limit:20});
 app.post('/api/auth/login',loginLimit,route(async(req,res)=>{const body=z.object({email:z.string().email().max(200),password:z.string().min(1).max(128)}).strict().parse(req.body);const user=await User.findOne({email:body.email.toLowerCase()});if(!user||!await verifyPassword(body.password,user.passwordHash))return res.status(401).json({error:'Invalid email or password'});await setSession(res,user);res.json({user:publicUser(user)});}));
-app.post('/api/auth/logout',route(async(req,res)=>{if(req.cookies.lifelink_session)await Session.deleteOne({hash:hashToken(req.cookies.lifelink_session)});res.clearCookie('lifelink_session',{path:'/'});res.json({ok:true});}));
+app.post('/api/auth/logout',route(async(req,res)=>{if(req.cookies.lifelink_session)await Session.deleteOne({hash:hashToken(req.cookies.lifelink_session)});res.clearCookie('lifelink_session',sessionCookieOptions());res.json({ok:true});}));
 const location=z.object({lat:z.number().min(-90).max(90),lng:z.number().min(-180).max(180)}).strict();
 app.post('/api/auth/register',loginLimit,route(async(req,res)=>{
  const b=z.object({email:z.string().email().max(200),password:z.string().min(12).max(128),name:z.string().min(2).max(100),role:z.enum(['donor','hospital']),consent:z.literal(true),bloodGroup:z.enum(BLOOD_GROUPS).optional(),area:z.string().min(2).max(120),location}).strict().parse(req.body);
